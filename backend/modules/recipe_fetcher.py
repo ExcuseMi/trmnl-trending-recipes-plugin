@@ -127,7 +127,7 @@ class RecipeFetcher:
                     page += 1
 
                     # Small delay between pages to be nice to the API
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(2)
 
                 except Exception as e:
                     logger.error(f"✗ Error on page {page}: {e}")
