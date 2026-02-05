@@ -319,24 +319,6 @@ def get_stats():
         }), 500
 
 
-@app.route('/api/refresh', methods=['POST'])
-@require_whitelisted_ip
-def trigger_refresh():
-    """Manually trigger a recipe refresh"""
-    try:
-        logger.info("🔄 Manual refresh triggered")
-        asyncio.run(recipe_fetcher.fetch_all_recipes())
-        return jsonify({
-            'status': 'success',
-            'message': 'Recipe refresh completed'
-        })
-    except Exception as e:
-        logger.error(f"✗ Manual refresh error: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': str(e)
-        }), 500
-
 
 # ============================================================================
 # STARTUP
@@ -369,11 +351,6 @@ def initialize():
     # Start background workers (only primary worker)
     if is_primary_worker:
         start_recipe_fetch_worker()
-
-        # Do initial fetch if database is empty
-        if db.get_recipe_count() == 0:
-            logger.info("📥 No recipes in database, performing initial fetch...")
-            asyncio.run(recipe_fetcher.fetch_all_recipes())
 
     logger.info("✓ Application initialized successfully")
 
