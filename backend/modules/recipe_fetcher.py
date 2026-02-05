@@ -56,6 +56,7 @@ class RecipeFetcher:
             'forks': forks,
             'url': f"https://trmnl.com/recipes/{recipe_data.get('id', '')}",
             'thumbnail_url': recipe_data.get('screenshot_url', ''),
+            'icon_url': recipe_data.get('icon_url', ''),
             'created_at': recipe_data.get('published_at'),
             'updated_at': recipe_data.get('published_at'),
         }
