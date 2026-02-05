@@ -25,7 +25,6 @@ services:
 
       # Server Configuration
       - PORT=5000
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health')"]
