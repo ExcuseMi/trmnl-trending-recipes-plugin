@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Environment variables
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
+TRMNL_IPS_API = 'https://trmnl.com/api/ips'
 LOCALHOST_IPS = ['127.0.0.1', '::1', 'localhost']
 DATABASE_PATH = os.getenv('DATABASE_PATH', '/data/recipes.db')
 FETCH_INTERVAL_HOURS = int(os.getenv('FETCH_INTERVAL_HOURS', '24'))
