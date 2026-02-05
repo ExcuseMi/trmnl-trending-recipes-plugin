@@ -53,7 +53,6 @@ class TrendingCalculator:
                 trending_recipes.append({
                     'id': recipe['id'],
                     'name': recipe['name'],
-                    'author': recipe['author'],
                     'description': recipe['description'],
                     'url': recipe['url'],
                     'thumbnail_url': recipe['thumbnail_url'],

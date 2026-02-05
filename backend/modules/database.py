@@ -37,7 +37,6 @@ class Database:
             CREATE TABLE IF NOT EXISTS recipes (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                author TEXT,
                 description TEXT,
                 installs INTEGER DEFAULT 0,
                 forks INTEGER DEFAULT 0,
@@ -93,14 +92,13 @@ class Database:
 
         cursor.execute("""
             INSERT INTO recipes (
-                id, name, author, description, installs, forks, 
+                id, name, description, installs, forks, 
                 popularity_score, url, thumbnail_url, created_at, 
                 updated_at, last_fetched
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
-                author = excluded.author,
                 description = excluded.description,
                 installs = excluded.installs,
                 forks = excluded.forks,
@@ -112,7 +110,6 @@ class Database:
         """, (
             recipe_data['id'],
             recipe_data.get('name'),
-            recipe_data.get('author'),
             recipe_data.get('description'),
             recipe_data.get('installs', 0),
             recipe_data.get('forks', 0),

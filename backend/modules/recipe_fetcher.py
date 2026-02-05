@@ -42,11 +42,16 @@ class RecipeFetcher:
         installs = int(stats.get('installs', 0))
         forks = int(stats.get('forks', 0))
 
+        # Extract description from author_bio
+        description = ''
+        author_bio = recipe_data.get('author_bio', {})
+        if isinstance(author_bio, dict):
+            description = author_bio.get('description', '')
+
         return {
             'id': str(recipe_data.get('id', '')),
             'name': recipe_data.get('name', 'Untitled'),
-            'author': '', # API doesn't provide author in the list
-            'description': recipe_data.get('description', ''),
+            'description': description,
             'installs': installs,
             'forks': forks,
             'url': f"https://trmnl.com/recipes/{recipe_data.get('id', '')}",
