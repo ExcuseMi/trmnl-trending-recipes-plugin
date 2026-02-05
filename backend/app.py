@@ -40,11 +40,15 @@ TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
 LOCALHOST_IPS = ['127.0.0.1', '::1', 'localhost']
 DATABASE_PATH = os.getenv('DATABASE_PATH', '/data/recipes.db')
 FETCH_INTERVAL_HOURS = int(os.getenv('FETCH_INTERVAL_HOURS', '24'))
+WORKER_LOCK_FILE = os.getenv('WORKER_LOCK_FILE', '/tmp/trmnl-primary-worker.lock')
 
 # Global IP whitelist state
 TRMNL_IPS = set(LOCALHOST_IPS)
 TRMNL_IPS_LOCK = threading.Lock()
 last_ip_refresh: Optional[datetime] = None
+
+# Worker coordination
+is_primary_worker = False
 
 # ============================================================================
 # FLASK APP
@@ -57,6 +61,38 @@ CORS(app)
 db = Database(DATABASE_PATH)
 recipe_fetcher = RecipeFetcher(db)
 trending_calculator = TrendingCalculator(db)
+
+
+# ============================================================================
+# WORKER COORDINATION
+# ============================================================================
+
+def try_acquire_primary_worker():
+    """
+    Try to become the primary worker (for background jobs).
+    Uses a file lock to ensure only one worker runs background tasks.
+    Returns True if this worker becomes primary.
+    """
+    import fcntl
+
+    try:
+        # Try to create and lock the file
+        lock_fd = os.open(WORKER_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+
+        # If we got here, we created the file - we're the primary worker
+        os.write(lock_fd, f"{os.getpid()}\n".encode())
+
+        logger.info(f"✓ This worker (PID {os.getpid()}) is the PRIMARY worker")
+        return True
+
+    except FileExistsError:
+        # Lock file already exists - another worker is primary
+        logger.info(f"✓ This worker (PID {os.getpid()}) is a SECONDARY worker (background jobs disabled)")
+        return False
+    except Exception as e:
+        # If we can't create the lock, assume we're not primary
+        logger.warning(f"⚠️  Could not acquire primary worker lock: {e}")
+        return False
 
 
 # ============================================================================
@@ -307,32 +343,58 @@ def trigger_refresh():
 
 def initialize():
     """Initialize the application"""
+    global is_primary_worker
+
     logger.info("🚀 Starting TRMNL Trending Recipes Plugin")
 
-    # Initialize database
+    # Initialize database (all workers need this)
     db.initialize()
 
-    # Load initial TRMNL IPs
-    if ENABLE_IP_WHITELIST:
+    # Determine if this worker should run background jobs
+    is_primary_worker = try_acquire_primary_worker()
+
+    # Load initial TRMNL IPs (only primary worker)
+    if ENABLE_IP_WHITELIST and is_primary_worker:
         logger.info("🔐 IP whitelist enabled")
         update_trmnl_ips_sync()
         start_ip_refresh_worker()
+    elif ENABLE_IP_WHITELIST and not is_primary_worker:
+        logger.info("🔐 IP whitelist enabled (managed by primary worker)")
+        # Secondary workers still need to load the IPs once
+        update_trmnl_ips_sync()
     else:
         logger.warning("⚠️  IP whitelist DISABLED - all IPs allowed!")
 
-    # Start background workers
-    start_recipe_fetch_worker()
+    # Start background workers (only primary worker)
+    if is_primary_worker:
+        start_recipe_fetch_worker()
 
-    # Do initial fetch if database is empty
-    if db.get_recipe_count() == 0:
-        logger.info("📥 No recipes in database, performing initial fetch...")
-        asyncio.run(recipe_fetcher.fetch_all_recipes())
+        # Do initial fetch if database is empty
+        if db.get_recipe_count() == 0:
+            logger.info("📥 No recipes in database, performing initial fetch...")
+            asyncio.run(recipe_fetcher.fetch_all_recipes())
 
     logger.info("✓ Application initialized successfully")
 
 
 # Initialize on module load (for gunicorn)
 initialize()
+
+# Cleanup handler for graceful shutdown
+import atexit
+
+
+def cleanup_primary_worker():
+    """Remove primary worker lock file on shutdown"""
+    if is_primary_worker and os.path.exists(WORKER_LOCK_FILE):
+        try:
+            os.remove(WORKER_LOCK_FILE)
+            logger.info("✓ Primary worker lock cleaned up")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not remove lock file: {e}")
+
+
+atexit.register(cleanup_primary_worker)
 
 if __name__ == '__main__':
     # Run Flask development server (for local testing only)
