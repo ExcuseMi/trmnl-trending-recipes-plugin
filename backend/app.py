@@ -246,7 +246,8 @@ def health():
     })
 
 
-@app.route('/api/trending', methods=['GET'])
+@app.route('/trending', methods=['GET'])
+@app.route('/trending/', methods=['GET'])
 @require_whitelisted_ip
 def get_trending():
     """
