@@ -41,15 +41,21 @@ class TrendingCalculator:
 
         logger.info(f"📈 Calculating trending recipes for {duration} ({days_ago} days)")
 
-        # Get all recipes with their historical data
+        # Get all recipes with their historical data for the requested duration
         recipes = self.database.get_all_recipes_with_delta(days_ago)
 
-        # Calculate trending scores
+        # Calculate trending scores and gather all deltas
         trending_recipes = []
         for recipe in recipes:
             trending_score = self._calculate_trending_score(recipe, days_ago)
 
             if trending_score is not None:
+                # Calculate deltas for ALL durations
+                all_deltas = {}
+                for dur_key, dur_days in self.DURATIONS.items():
+                    delta_data = self._get_delta_for_duration(recipe['id'], dur_days)
+                    all_deltas[dur_key] = delta_data
+
                 trending_recipes.append({
                     'id': recipe['id'],
                     'name': recipe['name'],
@@ -62,17 +68,7 @@ class TrendingCalculator:
                         'forks': recipe['current_forks'],
                         'popularity': recipe['current_popularity']
                     },
-                    'past_stats': {
-                        'installs': recipe.get('past_installs'),
-                        'forks': recipe.get('past_forks'),
-                        'popularity': recipe.get('past_popularity'),
-                        'snapshot_date': recipe.get('past_snapshot_date')
-                    },
-                    'delta': {
-                        'installs': recipe['current_installs'] - (recipe.get('past_installs') or 0),
-                        'forks': recipe['current_forks'] - (recipe.get('past_forks') or 0),
-                        'popularity': recipe['current_popularity'] - (recipe.get('past_popularity') or 0)
-                    },
+                    'deltas': all_deltas,
                     'trending_score': trending_score,
                     'duration': duration
                 })
@@ -86,6 +82,37 @@ class TrendingCalculator:
         logger.info(f"  ✓ Found {len(result)} trending recipes (from {len(recipes)} total)")
 
         return result
+
+    def _get_delta_for_duration(self, recipe_id: str, days_ago: int) -> Dict:
+        """Get delta information for a specific duration"""
+        # Get current stats
+        current = self.database.get_recipe_current(recipe_id)
+        if not current:
+            return {
+                'installs': 0,
+                'forks': 0,
+                'popularity': 0,
+                'past_snapshot_date': None
+            }
+
+        # Get past stats
+        past = self.database.get_recipe_delta(recipe_id, days_ago)
+
+        if past:
+            return {
+                'installs': current['installs'] - past['installs'],
+                'forks': current['forks'] - past['forks'],
+                'popularity': current['popularity_score'] - past['popularity_score'],
+                'past_snapshot_date': past['snapshot_date']
+            }
+        else:
+            # No historical data for this duration
+            return {
+                'installs': current['installs'],
+                'forks': current['forks'],
+                'popularity': current['popularity_score'],
+                'past_snapshot_date': None
+            }
 
     def _calculate_trending_score(self, recipe: Dict, days_ago: int) -> float:
         """
