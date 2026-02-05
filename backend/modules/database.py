@@ -42,6 +42,7 @@ class Database:
                 forks INTEGER DEFAULT 0,
                 popularity_score INTEGER DEFAULT 0,
                 url TEXT,
+                icon_url TEXT,
                 thumbnail_url TEXT,
                 created_at TEXT,
                 updated_at TEXT NOT NULL,
@@ -93,10 +94,10 @@ class Database:
         cursor.execute("""
             INSERT INTO recipes (
                 id, name, description, installs, forks, 
-                popularity_score, url, thumbnail_url, created_at, 
+                popularity_score, url, icon_url, thumbnail_url, created_at, 
                 updated_at, last_fetched
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -104,6 +105,7 @@ class Database:
                 forks = excluded.forks,
                 popularity_score = excluded.popularity_score,
                 url = excluded.url,
+                icon_url = excluded.icon_url,
                 thumbnail_url = excluded.thumbnail_url,
                 updated_at = excluded.updated_at,
                 last_fetched = excluded.last_fetched
@@ -115,6 +117,7 @@ class Database:
             recipe_data.get('forks', 0),
             popularity_score,
             recipe_data.get('url'),
+            recipe_data.get('icon_url'),
             recipe_data.get('thumbnail_url'),
             recipe_data.get('created_at'),
             recipe_data.get('updated_at', now),
@@ -208,12 +211,12 @@ class Database:
             SELECT 
                 r.id,
                 r.name,
-                r.author,
                 r.description,
                 r.installs as current_installs,
                 r.forks as current_forks,
                 r.popularity_score as current_popularity,
                 r.url,
+                r.icon_url,
                 r.thumbnail_url,
                 h.installs as past_installs,
                 h.forks as past_forks,

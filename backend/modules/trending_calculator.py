@@ -55,6 +55,7 @@ class TrendingCalculator:
                     'name': recipe['name'],
                     'description': recipe['description'],
                     'url': recipe['url'],
+                    'icon_url': recipe['icon_url'],
                     'thumbnail_url': recipe['thumbnail_url'],
                     'current_stats': {
                         'installs': recipe['current_installs'],
