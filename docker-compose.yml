@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  trmnl-trending-recipes:
+    build: ./backend
+    container_name: trmnl-trending-recipes
+    env_file:
+      - .env
+    ports:
+      - "5080:5000"
+    volumes:
+      - recipe-data:/data
+    environment:
+      # IP Whitelist Configuration
+      - ENABLE_IP_WHITELIST=${ENABLE_IP_WHITELIST:-true}
+      - IP_REFRESH_HOURS=${IP_REFRESH_HOURS:-24}
+
+      # Database Configuration
+      - DATABASE_PATH=/data/recipes.db
+
+      # Fetch Configuration
+      - FETCH_INTERVAL_HOURS=${FETCH_INTERVAL_HOURS:-24}
+
+      # Server Configuration
+      - PORT=5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  recipe-data:
+    driver: local
