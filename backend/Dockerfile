@@ -29,5 +29,5 @@ EXPOSE 5000
 ENV PYTHONUNBUFFERED=1
 ENV DATABASE_PATH=/data/recipes.db
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "2", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

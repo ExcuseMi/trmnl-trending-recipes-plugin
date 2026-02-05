@@ -246,6 +246,59 @@ def get_trending():
         }), 500
 
 
+@app.route('/api/recipe/<recipe_id>', methods=['GET'])
+@require_whitelisted_ip
+def get_recipe(recipe_id):
+    """Get details for a specific recipe"""
+    try:
+        recipe = db.get_recipe_current(recipe_id)
+        if not recipe:
+            return jsonify({
+                'error': 'Not found',
+                'message': f'Recipe {recipe_id} not found'
+            }), 404
+
+        return jsonify(recipe)
+    except Exception as e:
+        logger.error(f"✗ Error fetching recipe: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/stats', methods=['GET'])
+@require_whitelisted_ip
+def get_stats():
+    """Get overall statistics"""
+    try:
+        stats = db.get_statistics()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"✗ Error fetching stats: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/refresh', methods=['POST'])
+@require_whitelisted_ip
+def trigger_refresh():
+    """Manually trigger a recipe refresh"""
+    try:
+        logger.info("🔄 Manual refresh triggered")
+        asyncio.run(recipe_fetcher.fetch_all_recipes())
+        return jsonify({
+            'status': 'success',
+            'message': 'Recipe refresh completed'
+        })
+    except Exception as e:
+        logger.error(f"✗ Manual refresh error: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
 
 
 # ============================================================================
@@ -278,9 +331,10 @@ def initialize():
     logger.info("✓ Application initialized successfully")
 
 
-if __name__ == '__main__':
-    initialize()
+# Initialize on module load (for gunicorn)
+initialize()
 
-    # Run Flask app
+if __name__ == '__main__':
+    # Run Flask development server (for local testing only)
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=False)
