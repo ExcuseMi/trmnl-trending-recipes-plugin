@@ -37,17 +37,22 @@ class RecipeFetcher:
 
     def parse_recipe(self, recipe_data: Dict) -> Dict:
         """Parse and normalize recipe data from API"""
+        # Extract stats (installs and forks are in a 'stats' object)
+        stats = recipe_data.get('stats', {})
+        installs = int(stats.get('installs', 0))
+        forks = int(stats.get('forks', 0))
+
         return {
             'id': str(recipe_data.get('id', '')),
             'name': recipe_data.get('name', 'Untitled'),
-            'author': recipe_data.get('author', ''),
+            'author': '', # API doesn't provide author in the list
             'description': recipe_data.get('description', ''),
-            'installs': int(recipe_data.get('installs', 0)),
-            'forks': int(recipe_data.get('forks', 0)),
-            'url': recipe_data.get('url', ''),
-            'thumbnail_url': recipe_data.get('thumbnail_url', ''),
-            'created_at': recipe_data.get('created_at'),
-            'updated_at': recipe_data.get('updated_at'),
+            'installs': installs,
+            'forks': forks,
+            'url': f"https://trmnl.com/recipes/{recipe_data.get('id', '')}",
+            'thumbnail_url': recipe_data.get('screenshot_url', ''),
+            'created_at': recipe_data.get('published_at'),
+            'updated_at': recipe_data.get('published_at'),
         }
 
     async def fetch_all_recipes(self) -> int:
@@ -58,6 +63,7 @@ class RecipeFetcher:
         start_time = datetime.now()
         recipes_processed = 0
         page = 1
+        total_recipes = None
 
         logger.info("📥 Starting recipe fetch from TRMNL API...")
 
@@ -67,7 +73,13 @@ class RecipeFetcher:
                     logger.info(f"  → Fetching page {page}...")
                     data = await self.fetch_page(client, page)
 
-                    recipes = data.get('recipes', [])
+                    # Log total on first page
+                    if page == 1 and 'total' in data:
+                        total_recipes = data['total']
+                        logger.info(f"  📊 Total recipes available: {total_recipes}")
+
+                    # Recipes are in the 'data' field
+                    recipes = data.get('data', [])
                     if not recipes:
                         logger.info(f"  ✓ No more recipes on page {page}, stopping")
                         break
@@ -90,17 +102,20 @@ class RecipeFetcher:
                             recipes_processed += 1
 
                         except Exception as e:
-                            logger.error(f"✗ Error processing recipe: {e}")
+                            logger.error(f"✗ Error processing recipe {recipe_data.get('id', 'unknown')}: {e}")
                             continue
 
-                    logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes")
+                    # Show progress
+                    if total_recipes:
+                        progress = (recipes_processed / total_recipes) * 100
+                        logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes ({recipes_processed}/{total_recipes} = {progress:.1f}%)")
+                    else:
+                        logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes (total: {recipes_processed})")
 
-                    # Check if there are more pages
-                    pagination = data.get('pagination', {})
-                    total_pages = pagination.get('total_pages', page)
-
-                    if page >= total_pages:
-                        logger.info(f"  ✓ Reached last page ({total_pages})")
+                    # Check if there are more pages using next_page_url
+                    next_page_url = data.get('next_page_url')
+                    if not next_page_url:
+                        logger.info(f"  ✓ Reached last page (no next_page_url)")
                         break
 
                     page += 1
