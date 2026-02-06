@@ -506,12 +506,6 @@ class Database:
     def get_recipes_with_delta_since(self, cutoff: datetime) -> List[Dict]:
         """
         Get all recipes with their stats since a specific cutoff time
-
-        Args:
-            cutoff: UTC datetime to look back from
-
-        Returns:
-            List of recipes with current and past stats
         """
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -529,9 +523,9 @@ class Database:
                 r.url,
                 r.icon_url,
                 r.thumbnail_url,
-                h.installs as past_installs,
-                h.forks as past_forks,
-                h.popularity_score as past_popularity,
+                COALESCE(h.installs, 0) as past_installs,
+                COALESCE(h.forks, 0) as past_forks,
+                COALESCE(h.popularity_score, 0) as past_popularity,
                 h.snapshot_timestamp as past_snapshot_timestamp,
                 CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
@@ -550,24 +544,23 @@ class Database:
                 FROM recipe_history
                 WHERE snapshot_timestamp <= ?
             ) h ON r.id = h.recipe_id AND h.rn = 1
-            -- REMOVED the WHERE clause to include ALL recipes
+            ORDER BY r.popularity_score DESC
         """, (cutoff_iso,))
 
         results = []
         for row in cursor.fetchall():
             row_dict = dict(row)
-            # Convert NULL to None for consistency
-            if row_dict['past_installs'] is None:
-                row_dict['past_installs'] = 0
-                row_dict['past_forks'] = 0
-                row_dict['past_popularity'] = 0
-                row_dict['has_history'] = False
-            else:
-                row_dict['has_history'] = True
+            # Ensure all numeric fields are integers
+            row_dict['current_installs'] = int(row_dict['current_installs'] or 0)
+            row_dict['current_forks'] = int(row_dict['current_forks'] or 0)
+            row_dict['current_popularity'] = int(row_dict['current_popularity'] or 0)
+            row_dict['past_installs'] = int(row_dict['past_installs'] or 0)
+            row_dict['past_forks'] = int(row_dict['past_forks'] or 0)
+            row_dict['past_popularity'] = int(row_dict['past_popularity'] or 0)
+            row_dict['has_history'] = bool(row_dict['has_history'])
             results.append(row_dict)
 
         return results
-
     def get_recipe_delta_since(self, recipe_id: str, cutoff: datetime) -> Optional[Dict]:
         """
         Get stats for a recipe since a specific cutoff time
@@ -577,8 +570,29 @@ class Database:
 
         cutoff_iso = cutoff.isoformat()
 
+        # First get current stats
         cursor.execute("""
-            SELECT installs, forks, popularity_score, snapshot_timestamp
+            SELECT 
+                installs as current_installs,
+                forks as current_forks,
+                popularity_score as current_popularity
+            FROM recipes
+            WHERE id = ?
+        """, (recipe_id,))
+
+        current_row = cursor.fetchone()
+        if not current_row:
+            return None
+
+        current = dict(current_row)
+
+        # Get historical stats before cutoff
+        cursor.execute("""
+            SELECT 
+                installs as past_installs,
+                forks as past_forks,
+                popularity_score as past_popularity,
+                snapshot_timestamp as past_snapshot_timestamp
             FROM recipe_history
             WHERE recipe_id = ?
             AND snapshot_timestamp <= ?
@@ -586,5 +600,34 @@ class Database:
             LIMIT 1
         """, (recipe_id, cutoff_iso))
 
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        past_row = cursor.fetchone()
+
+        if past_row:
+            past = dict(past_row)
+            has_data = True
+        else:
+            # No historical data before cutoff
+            past = {
+                'past_installs': 0,
+                'past_forks': 0,
+                'past_popularity': 0,
+                'past_snapshot_timestamp': None
+            }
+            has_data = False
+
+        # Calculate deltas
+        result = {
+            'current_installs': current['current_installs'],
+            'current_forks': current['current_forks'],
+            'current_popularity': current['current_popularity'],
+            'past_installs': past['past_installs'],
+            'past_forks': past['past_forks'],
+            'past_popularity': past['past_popularity'],
+            'past_snapshot_timestamp': past['past_snapshot_timestamp'],
+            'has_data': has_data,
+            'delta_installs': current['current_installs'] - past['past_installs'],
+            'delta_forks': current['current_forks'] - past['past_forks'],
+            'delta_popularity': current['current_popularity'] - past['past_popularity']
+        }
+
+        return result
