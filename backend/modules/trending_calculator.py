@@ -187,26 +187,31 @@ class TrendingCalculator:
             return 0.0
 
         try:
-            # Try multiple date formats
+            # Try multiple date formats with timezone awareness
             published_at = None
 
-            # Format 1: ISO with microseconds
+            # Format 1: ISO with microseconds and Z timezone
             try:
-                published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+                # Parse as UTC (Z means UTC)
+                dt_str = published_at_str.replace('Z', '+00:00')
+                published_at = datetime.fromisoformat(dt_str)
             except ValueError:
                 pass
 
             # Format 2: ISO without microseconds
             if not published_at:
                 try:
-                    published_at = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%SZ')
+                    # Use datetime.strptime and add timezone
+                    dt_naive = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%SZ')
+                    published_at = dt_naive.replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
 
             # Format 3: ISO with milliseconds
             if not published_at:
                 try:
-                    published_at = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+                    dt_naive = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+                    published_at = dt_naive.replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
 
@@ -214,7 +219,11 @@ class TrendingCalculator:
                 logger.warning(f"Could not parse date: {published_at_str}")
                 return 0.0
 
-            age_seconds = (datetime.utcnow() - published_at).total_seconds()
+            # Get current time in UTC with timezone awareness
+            now_utc = datetime.now(timezone.utc)
+
+            # Calculate difference
+            age_seconds = (now_utc - published_at).total_seconds()
             return age_seconds / 86400  # Convert to days
 
         except Exception as e:
@@ -245,60 +254,26 @@ class TrendingCalculator:
                                              utc_offset_seconds: int = 0,
                                              cutoff_iso: str = None) -> float:
         """
-        Calculate trending score with proper age handling
+        Trending calculation - SIMPLE AND CORRECT
         """
         try:
             has_history = recipe.get('has_historical_data', False)
             popularity_delta = recipe.get('popularity_delta', 0) or 0
-            recipe_age_days = recipe.get('recipe_age_days', 0)
-            recipe_id = recipe.get('id')
 
-            logger.debug(
-                f"Trending calc for {recipe_id}: has_history={has_history}, delta={popularity_delta}, age={recipe_age_days}")
+            # CRITICAL: For "today" trending, we need yesterday's snapshot
+            # If we don't have it, we can't calculate
+            if timeframe == 'today' and not has_history:
+                return 0.0
 
-            # FIX: If recipe_age_days is 0 but recipe has published_at, recalculate
-            if recipe_age_days == 0 and recipe.get('published_at'):
-                recipe_age_days = self._calculate_recipe_age_days(recipe['published_at'])
-                logger.debug(f"  Recalculated age for {recipe_id}: {recipe_age_days} days")
-
-            # SPECIAL CASE: Old recipes with backfilled data (no real yesterday snapshot)
-            if not has_history and recipe_age_days > 1 and popularity_delta > 0:
-                # This is likely backfilled baseline data
-                # The recipe existed before yesterday but we only have today's real snapshot
-
+            # For other timeframes, we might still calculate with available data
+            if has_history and popularity_delta > 0:
                 if timeframe == 'today':
-                    # For "today" trending with backfilled data:
-                    # We don't know when the popularity was actually gained
-                    # Could be today, could be weeks ago
-
-                    # Option 1: Conservative - assume it grew over recipe's lifetime
-                    estimated_daily = float(popularity_delta) / max(1.0, recipe_age_days)
-
-                    # Option 2: More aggressive - assume some was today
-                    # Let's use a small percentage of total
-                    return estimated_daily * 0.5  # 50% of estimated daily growth
-
-                elif timeframe in ['24h', '7d', '30d']:
-                    # For rolling windows, use conservative estimate
-                    timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                    hours = timeframe_info.get('hours', 24)
-                    period_days = max(1.0, hours / 24)
-
-                    estimated_daily = float(popularity_delta) / max(1.0, recipe_age_days)
-                    return estimated_daily * period_days * 0.3  # 30% credit
-                else:
-                    return 0.0
-
-            # NORMAL CASE: We have real historical data
-            if has_history:
-                if popularity_delta <= 0:
-                    return 0.0
-
-                if timeframe == 'today':
+                    # Normalize by hours passed today
                     if cutoff_iso:
                         try:
-                            hours_passed = (datetime.utcnow() - datetime.fromisoformat(
-                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
+                            cutoff_str = cutoff_iso.replace('Z', '')
+                            cutoff = datetime.strptime(cutoff_str, '%Y-%m-%dT%H:%M:%S.%f')
+                            hours_passed = (datetime.utcnow() - cutoff).total_seconds() / 3600
                             days = max(0.1, hours_passed / 24)
                         except Exception:
                             days = 1.0
@@ -306,28 +281,17 @@ class TrendingCalculator:
                         days = 1.0
                     return float(popularity_delta) / days
                 else:
+                    # Rolling windows
                     timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
                     hours = timeframe_info.get('hours', 24)
                     days = max(0.1, hours / 24)
                     return float(popularity_delta) / days
 
-            # TRULY NEW RECIPES (age <= 1 day)
-            if recipe_age_days <= 1:
-                if timeframe == 'today':
-                    return float(popularity_delta) / 0.5  # Assume at least 12 hours
-                else:
-                    timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                    hours = timeframe_info.get('hours', 24)
-                    days = max(1.0, hours / 24)
-                    return float(popularity_delta) / days
-
-            # Fallback
             return 0.0
 
         except Exception as e:
-            logger.error(f"Error calculating trending for {recipe.get('id', 'unknown')}: {e}")
+            logger.error(f"Error: {e}")
             return 0.0
-
 
     def _calculate_conservative_score(self, has_history: bool, popularity_delta: int,
                                       timeframe: str, cutoff_iso: str = None) -> float:
