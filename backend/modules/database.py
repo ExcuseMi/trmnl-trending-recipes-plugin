@@ -5,7 +5,7 @@ Handles SQLite operations and schema management
 
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,9 @@ class Database:
         if self.conn is None:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
+            # Enable foreign keys and other pragmas
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self.conn.execute("PRAGMA journal_mode = WAL")
         return self.conn
 
     def initialize(self):
@@ -58,7 +61,8 @@ class Database:
                 installs INTEGER NOT NULL,
                 forks INTEGER NOT NULL,
                 popularity_score INTEGER NOT NULL,
-                snapshot_date TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,  -- UTC date string in ISO format
+                snapshot_timestamp TEXT NOT NULL,  -- UTC datetime string in ISO format
                 FOREIGN KEY (recipe_id) REFERENCES recipes(id),
                 UNIQUE(recipe_id, snapshot_date)
             )
@@ -73,6 +77,11 @@ class Database:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_recipe_history_recipe 
             ON recipe_history(recipe_id, snapshot_date)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_recipe_history_timestamp 
+            ON recipe_history(snapshot_timestamp)
         """)
 
         cursor.execute("""
@@ -127,23 +136,27 @@ class Database:
         conn.commit()
 
     def save_snapshot(self, recipe_id: str, installs: int, forks: int):
-        """Save a daily snapshot of recipe stats"""
+        """Save a daily snapshot of recipe stats using UTC"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        snapshot_date = datetime.utcnow().date().isoformat()
+        # Use UTC for all timestamps
+        now_utc = datetime.utcnow()
+        snapshot_date = now_utc.date().isoformat()  # UTC date
+        snapshot_timestamp = now_utc.isoformat()  # UTC datetime
         popularity_score = installs + forks
 
         cursor.execute("""
             INSERT INTO recipe_history (
-                recipe_id, installs, forks, popularity_score, snapshot_date
+                recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(recipe_id, snapshot_date) DO UPDATE SET
                 installs = excluded.installs,
                 forks = excluded.forks,
-                popularity_score = excluded.popularity_score
-        """, (recipe_id, installs, forks, popularity_score, snapshot_date))
+                popularity_score = excluded.popularity_score,
+                snapshot_timestamp = excluded.snapshot_timestamp
+        """, (recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp))
 
         conn.commit()
 
@@ -175,37 +188,106 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Calculate cutoff in UTC
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = cutoff.date().isoformat()
+
         cursor.execute("""
             SELECT * FROM recipe_history 
             WHERE recipe_id = ?
+            AND snapshot_date >= ?
             ORDER BY snapshot_date DESC
-            LIMIT ?
-        """, (recipe_id, days))
+        """, (recipe_id, cutoff_date))
 
         return [dict(row) for row in cursor.fetchall()]
 
     def get_recipe_delta(self, recipe_id: str, days_ago: int) -> Optional[Dict]:
         """Get stats from N days ago for delta calculation"""
+        return self.get_recipe_delta_with_offset(recipe_id, days_ago, 0)
+
+    def get_recipe_delta_with_offset(self, recipe_id: str, days_ago: int, utc_offset_seconds: int = 0) -> Optional[Dict]:
+        """
+        Get stats from N days ago with UTC offset consideration
+
+        Args:
+            recipe_id: Recipe identifier
+            days_ago: Number of days to look back
+            utc_offset_seconds: UTC offset in seconds for day boundary adjustment
+
+        Returns:
+            Dict with historical stats or None if not found
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Get the snapshot from N days ago (or closest match)
+        # Calculate the target date with UTC offset adjustment
+        # We want the snapshot from the local midnight N days ago
+        now_utc = datetime.utcnow()
+
+        # Adjust to local time
+        local_now = now_utc + timedelta(seconds=utc_offset_seconds)
+        # Get local midnight N days ago
+        target_local_midnight = (local_now - timedelta(days=days_ago)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        # Convert back to UTC
+        target_utc_midnight = target_local_midnight - timedelta(seconds=utc_offset_seconds)
+        target_date = target_utc_midnight.date().isoformat()
+
+        logger.debug(f"Looking for snapshot for recipe {recipe_id} on date {target_date} (UTC offset: {utc_offset_seconds}s)")
+
         cursor.execute("""
-            SELECT installs, forks, popularity_score, snapshot_date
+            SELECT installs, forks, popularity_score, snapshot_date, snapshot_timestamp
             FROM recipe_history
             WHERE recipe_id = ?
-            AND snapshot_date <= date('now', '-' || ? || ' days')
-            ORDER BY snapshot_date DESC
+            AND snapshot_date = ?
+            ORDER BY snapshot_timestamp DESC
             LIMIT 1
-        """, (recipe_id, days_ago))
+        """, (recipe_id, target_date))
 
         row = cursor.fetchone()
+
+        # If we don't have exact date match, find the closest snapshot before target date
+        if not row:
+            cursor.execute("""
+                SELECT installs, forks, popularity_score, snapshot_date, snapshot_timestamp
+                FROM recipe_history
+                WHERE recipe_id = ?
+                AND snapshot_date < ?
+                ORDER BY snapshot_date DESC
+                LIMIT 1
+            """, (recipe_id, target_date))
+
+            row = cursor.fetchone()
+
         return dict(row) if row else None
 
-    def get_all_recipes_with_delta(self, days_ago: int) -> List[Dict]:
-        """Get all recipes with their stats from N days ago"""
+    def get_all_recipes_with_delta(self, days_ago: int, utc_offset_seconds: int = 0) -> List[Dict]:
+        """
+        Get all recipes with their stats from N days ago with UTC offset
+
+        Args:
+            days_ago: Number of days to look back
+            utc_offset_seconds: UTC offset in seconds for day boundary adjustment
+
+        Returns:
+            List of recipes with current and past stats
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
+
+        # Calculate the target date with UTC offset adjustment
+        now_utc = datetime.utcnow()
+
+        # Adjust to local time
+        local_now = now_utc + timedelta(seconds=utc_offset_seconds)
+        # Get local midnight N days ago
+        target_local_midnight = (local_now - timedelta(days=days_ago)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        # Convert back to UTC
+        target_utc_midnight = target_local_midnight - timedelta(seconds=utc_offset_seconds)
+        target_date = target_utc_midnight.date().isoformat()
 
         cursor.execute("""
             SELECT 
@@ -221,23 +303,26 @@ class Database:
                 h.installs as past_installs,
                 h.forks as past_forks,
                 h.popularity_score as past_popularity,
-                h.snapshot_date as past_snapshot_date
+                h.snapshot_date as past_snapshot_date,
+                h.snapshot_timestamp as past_snapshot_timestamp
             FROM recipes r
             LEFT JOIN (
+                -- Get the most recent snapshot on or before target date for each recipe
                 SELECT DISTINCT
                     recipe_id,
                     installs,
                     forks,
                     popularity_score,
                     snapshot_date,
+                    snapshot_timestamp,
                     ROW_NUMBER() OVER (
                         PARTITION BY recipe_id 
                         ORDER BY snapshot_date DESC
                     ) as rn
                 FROM recipe_history
-                WHERE snapshot_date <= date('now', '-' || ? || ' days')
+                WHERE snapshot_date <= ?
             ) h ON r.id = h.recipe_id AND h.rn = 1
-        """, (days_ago,))
+        """, (target_date,))
 
         return [dict(row) for row in cursor.fetchall()]
 
@@ -263,38 +348,69 @@ class Database:
         total_snapshots = cursor.fetchone()['count']
 
         # Latest snapshot date
-        cursor.execute("SELECT MAX(snapshot_date) as latest FROM recipe_history")
-        latest_snapshot = cursor.fetchone()['latest']
+        cursor.execute("SELECT MAX(snapshot_date) as latest_date, MAX(snapshot_timestamp) as latest_timestamp FROM recipe_history")
+        latest = cursor.fetchone()
 
         # Total installs and forks
         cursor.execute("SELECT SUM(installs) as installs, SUM(forks) as forks FROM recipes")
         totals = cursor.fetchone()
 
+        # Database file info
+        import os
+        db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+
         return {
             'total_recipes': total_recipes,
             'total_snapshots': total_snapshots,
-            'latest_snapshot': latest_snapshot,
+            'latest_snapshot_date': latest['latest_date'],
+            'latest_snapshot_timestamp': latest['latest_timestamp'],
             'total_installs': totals['installs'] or 0,
-            'total_forks': totals['forks'] or 0
+            'total_forks': totals['forks'] or 0,
+            'database_size_bytes': db_size
         }
+
+    def get_recent_snapshots(self, hours: int = 24) -> List[Dict]:
+        """Get snapshots from the last N hours"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_iso = cutoff.isoformat()
+
+        cursor.execute("""
+            SELECT * FROM recipe_history
+            WHERE snapshot_timestamp >= ?
+            ORDER BY snapshot_timestamp DESC
+        """, (cutoff_iso,))
+
+        return [dict(row) for row in cursor.fetchall()]
 
     def cleanup_old_snapshots(self, days_to_keep: int = 180):
         """Remove old snapshots beyond retention period"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        cutoff = datetime.utcnow() - timedelta(days=days_to_keep)
+        cutoff_date = cutoff.date().isoformat()
+
         cursor.execute("""
             DELETE FROM recipe_history
-            WHERE snapshot_date < date('now', '-' || ? || ' days')
-        """, (days_to_keep,))
+            WHERE snapshot_date < ?
+        """, (cutoff_date,))
 
         deleted = cursor.rowcount
         conn.commit()
 
         if deleted > 0:
-            logger.info(f"🗑️  Cleaned up {deleted} old snapshots")
+            logger.info(f"🗑️  Cleaned up {deleted} old snapshots (older than {cutoff_date})")
 
         return deleted
+
+    def vacuum(self):
+        """Optimize database"""
+        conn = self.get_connection()
+        conn.execute("VACUUM")
+        logger.info("✓ Database vacuum completed")
 
     def close(self):
         """Close database connection"""
