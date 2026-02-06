@@ -17,6 +17,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        self.schema_version = 2  # Current schema version
 
     def get_connection(self) -> sqlite3.Connection:
         """Get or create database connection"""
@@ -28,12 +29,83 @@ class Database:
             self.conn.execute("PRAGMA journal_mode = WAL")
         return self.conn
 
+    def _get_schema_version(self) -> int:
+        """Get current schema version from database"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Try to read schema version from a special table
+            cursor.execute("SELECT version FROM schema_version ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            return row['version'] if row else 0
+        except sqlite3.OperationalError:
+            # Table doesn't exist, assume version 0
+            return 0
+
+    def _set_schema_version(self, version: int):
+        """Store schema version in database"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL,
+                upgraded_at TEXT NOT NULL
+            )
+        """)
+
+        now = datetime.utcnow().isoformat()
+        cursor.execute("INSERT INTO schema_version (version, upgraded_at) VALUES (?, ?)",
+                      (version, now))
+        conn.commit()
+
+    def _migrate_from_v1_to_v2(self):
+        """Migrate database from schema version 1 to 2"""
+        logger.info("🔧 Migrating database schema from v1 to v2...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Add snapshot_timestamp column if it doesn't exist
+            cursor.execute("PRAGMA table_info(recipe_history)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'snapshot_timestamp' not in columns:
+                logger.info("  ✓ Adding snapshot_timestamp column...")
+                cursor.execute("ALTER TABLE recipe_history ADD COLUMN snapshot_timestamp TEXT")
+
+                # Populate with current UTC timestamp for existing rows
+                # Use snapshot_date at midnight UTC as default
+                cursor.execute("""
+                    UPDATE recipe_history 
+                    SET snapshot_timestamp = snapshot_date || 'T00:00:00Z'
+                    WHERE snapshot_timestamp IS NULL
+                """)
+                logger.info(f"  ✓ Updated {cursor.rowcount} existing records")
+
+            conn.commit()
+            logger.info("✓ Schema migration to v2 completed")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
+
     def initialize(self):
-        """Initialize database schema"""
+        """Initialize database schema with migrations"""
         logger.info(f"📊 Initializing database: {self.db_path}")
 
         conn = self.get_connection()
         cursor = conn.cursor()
+
+        # Check current schema version
+        current_version = self._get_schema_version()
+        logger.info(f"  Current schema version: {current_version}")
+
+        # Create main tables if they don't exist
+        logger.info("  Creating/verifying tables...")
 
         # Create recipes table (current state)
         cursor.execute("""
@@ -61,14 +133,13 @@ class Database:
                 installs INTEGER NOT NULL,
                 forks INTEGER NOT NULL,
                 popularity_score INTEGER NOT NULL,
-                snapshot_date TEXT NOT NULL,  -- UTC date string in ISO format
-                snapshot_timestamp TEXT NOT NULL,  -- UTC datetime string in ISO format
+                snapshot_date TEXT NOT NULL,
                 FOREIGN KEY (recipe_id) REFERENCES recipes(id),
                 UNIQUE(recipe_id, snapshot_date)
             )
         """)
 
-        # Create indices for performance
+        # Create initial indices
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_recipe_history_date 
             ON recipe_history(snapshot_date)
@@ -80,17 +151,27 @@ class Database:
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_recipe_history_timestamp 
-            ON recipe_history(snapshot_timestamp)
-        """)
-
-        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_recipes_popularity 
             ON recipes(popularity_score DESC)
         """)
 
         conn.commit()
-        logger.info("✓ Database schema initialized")
+
+        # Run migrations if needed
+        if current_version < 1:
+            self._set_schema_version(1)
+            current_version = 1
+
+        if current_version < 2:
+            self._migrate_from_v1_to_v2()
+            # Create additional index for timestamp
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_recipe_history_timestamp 
+                ON recipe_history(snapshot_timestamp)
+            """)
+            self._set_schema_version(2)
+
+        logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
         """Insert or update a recipe"""
@@ -355,6 +436,9 @@ class Database:
         cursor.execute("SELECT SUM(installs) as installs, SUM(forks) as forks FROM recipes")
         totals = cursor.fetchone()
 
+        # Schema version
+        schema_version = self._get_schema_version()
+
         # Database file info
         import os
         db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
@@ -366,6 +450,7 @@ class Database:
             'latest_snapshot_timestamp': latest['latest_timestamp'],
             'total_installs': totals['installs'] or 0,
             'total_forks': totals['forks'] or 0,
+            'schema_version': schema_version,
             'database_size_bytes': db_size
         }
 
