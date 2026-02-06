@@ -148,30 +148,12 @@ class TrendingCalculator:
                     'url': recipe['url'],
                     'icon_url': recipe['icon_url'],
                     'thumbnail_url': recipe['thumbnail_url'],
-                    'current_stats': {
-                        'popularity': recipe['current_popularity'],  # Just show popularity
-                        # Optionally still show breakdown:
-                        'breakdown': {
-                            'installs': recipe['current_installs'],
-                            'forks': recipe['current_forks']
-                        }
-                    },
-                    'deltas': {
-                        timeframe: {
-                            'popularity': main_delta['popularity'],  # Just show popularity delta
-                            'hours': main_delta.get('hours'),
-                            'has_data': main_delta['has_data'],
-                            'period_start': main_delta['period_start'],
-                            # Optionally still show breakdown:
-                            'breakdown': {
-                                'installs': main_delta['installs'],
-                                'forks': main_delta['forks']
-                            }
-                        }
-                    },
+                    'popularity': recipe['current_popularity'],  # Single combined metric
+                    'popularity_delta': main_delta['popularity'],  # Change in popularity
+                    'popularity_growth_pct': (main_delta['popularity'] / recipe['current_popularity'] * 100) if recipe[
+                                                                                                                    'current_popularity'] > 0 else 0,
                     'trending_score': trending_score,
                     'timeframe': timeframe,
-                    'cutoff_time': cutoff_iso,
                     'has_historical_data': recipe.get('has_history', False)
                 })
         # Sort by trending score (descending)
