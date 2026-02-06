@@ -149,19 +149,31 @@ class TrendingCalculator:
                     'icon_url': recipe['icon_url'],
                     'thumbnail_url': recipe['thumbnail_url'],
                     'current_stats': {
-                        'installs': recipe['current_installs'],
-                        'forks': recipe['current_forks'],
-                        'popularity': recipe['current_popularity']
+                        'popularity': recipe['current_popularity'],  # Just show popularity
+                        # Optionally still show breakdown:
+                        'breakdown': {
+                            'installs': recipe['current_installs'],
+                            'forks': recipe['current_forks']
+                        }
                     },
                     'deltas': {
-                        timeframe: main_delta  # Only include the requested timeframe
+                        timeframe: {
+                            'popularity': main_delta['popularity'],  # Just show popularity delta
+                            'hours': main_delta.get('hours'),
+                            'has_data': main_delta['has_data'],
+                            'period_start': main_delta['period_start'],
+                            # Optionally still show breakdown:
+                            'breakdown': {
+                                'installs': main_delta['installs'],
+                                'forks': main_delta['forks']
+                            }
+                        }
                     },
                     'trending_score': trending_score,
                     'timeframe': timeframe,
                     'cutoff_time': cutoff_iso,
                     'has_historical_data': recipe.get('has_history', False)
                 })
-
         # Sort by trending score (descending)
         trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
@@ -202,23 +214,39 @@ class TrendingCalculator:
             current_popularity = int(current_popularity)
             past_popularity = int(past_popularity)
 
-            if not has_history or past_popularity == 0:
-                # No historical data for this period
-                if timeframe in ['today', 'week']:
-                    # For calendar periods with no history, use current stats
-                    # but penalize to avoid favoring brand new recipes
-                    return float(current_popularity) * 0.3
-                else:
-                    # For rolling windows with no history
-                    # Use a smaller penalty since we don't know when it was created
-                    return float(current_popularity) * 0.1
-
+            # Calculate delta regardless
             delta = float(current_popularity - past_popularity)
 
+            if not has_history or past_popularity == 0:
+                # No historical data for this period
+                # This could be:
+                # 1. A brand new recipe (created after cutoff)
+                # 2. A recipe that existed but we don't have snapshot before cutoff
+
+                if delta > 0:
+                    # We have SOME growth data
+                    if timeframe in ['today', 'week']:
+                        # For calendar periods, use delta directly (not penalized as much)
+                        # since we know the exact timeframe
+                        return delta
+                    else:
+                        # For rolling windows, use delta (it's actual growth)
+                        return delta
+                else:
+                    # No growth data available
+                    if timeframe in ['today', 'week']:
+                        # For calendar periods with no history, use current stats
+                        # but penalize to avoid favoring brand new recipes
+                        return float(current_popularity) * 0.3
+                    else:
+                        # For rolling windows with no history
+                        return float(current_popularity) * 0.1
+
+            # We have historical data
             if delta <= 0:
                 return 0.0
 
-            # Calculate normalized score
+            # Calculate normalized score for the period
             if timeframe in ['today', 'week']:
                 # Calendar periods: score per day
                 if timeframe == 'today':
@@ -256,6 +284,7 @@ class TrendingCalculator:
         except Exception as e:
             logger.error(f"Error calculating trending score: {e}")
             return 0.0
+
     def _get_delta_for_timeframe(self, recipe_id: str, timeframe: str, utc_offset_seconds: int = 0) -> Dict:
         """Get delta for a specific timeframe"""
         try:
