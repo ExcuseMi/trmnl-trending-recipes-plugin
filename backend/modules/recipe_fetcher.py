@@ -313,7 +313,12 @@ class RecipeFetcher:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                recipes_data = response.json()
+                data = response.json()
+
+                # Based on the logs, the response is a dictionary with recipe objects in various keys
+                # Let's handle the actual response structure
+                recipes_data = data.get('data', [])
+
 
                 recipes_processed = 0
                 for recipe_data in recipes_data:
