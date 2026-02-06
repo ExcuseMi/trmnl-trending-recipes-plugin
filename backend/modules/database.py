@@ -143,19 +143,19 @@ class Database:
             """)
 
             # 3. Migrate existing daily snapshots to also have hourly resolution
-            # (they'll get timestamped at hour 0)
+            # Use INSERT OR IGNORE instead of ON CONFLICT DO NOTHING
             cursor.execute("""
-                INSERT INTO recipe_hourly_snapshots 
+                INSERT OR IGNORE INTO recipe_hourly_snapshots 
                 (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp)
                 SELECT 
                     recipe_id, 
                     installs, 
                     forks, 
                     popularity_score, 
-                    snapshot_date || 'T00:00:00Z' as snapshot_hour,
+                    substr(snapshot_date, 1, 10) || 'T00:00:00Z' as snapshot_hour,
                     snapshot_timestamp
                 FROM recipe_history
-                ON CONFLICT(recipe_id, snapshot_hour) DO NOTHING
+                WHERE snapshot_timestamp IS NOT NULL
             """)
             logger.info(f"  ✓ Migrated {cursor.rowcount} daily snapshots to hourly format")
 
@@ -714,20 +714,30 @@ class Database:
 
         # Use UTC for all timestamps
         now_utc = datetime.utcnow()
-        snapshot_hour = now_utc.replace(minute=0, second=0, microsecond=0).isoformat() + 'Z'  # Hour precision
-        snapshot_timestamp = now_utc.isoformat() + 'Z'  # Full precision
+        snapshot_hour = now_utc.replace(minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        snapshot_timestamp = now_utc.isoformat() + 'Z'
         popularity_score = installs + forks
 
+        # First, ensure the hourly snapshots table exists
         cursor.execute("""
-            INSERT INTO recipe_hourly_snapshots (
-                recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp
+            CREATE TABLE IF NOT EXISTS recipe_hourly_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id TEXT NOT NULL,
+                installs INTEGER NOT NULL,
+                forks INTEGER NOT NULL,
+                popularity_score INTEGER NOT NULL,
+                snapshot_hour TEXT NOT NULL,
+                snapshot_timestamp TEXT NOT NULL,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+                UNIQUE(recipe_id, snapshot_hour)
             )
+        """)
+
+        # Use INSERT OR REPLACE for SQLite compatibility
+        cursor.execute("""
+            INSERT OR REPLACE INTO recipe_hourly_snapshots 
+            (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(recipe_id, snapshot_hour) DO UPDATE SET
-                installs = excluded.installs,
-                forks = excluded.forks,
-                popularity_score = excluded.popularity_score,
-                snapshot_timestamp = excluded.snapshot_timestamp
         """, (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp))
 
         conn.commit()
