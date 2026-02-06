@@ -333,40 +333,8 @@ def get_trending():
         return jsonify({
             'error': 'Internal server error',
             'message': str(e),
-            'user_id': user_id if user_id else None
         }), 500
 
-
-@app.route('/api/user/<user_id>/refresh', methods=['POST'])
-@require_whitelisted_ip
-def refresh_user_recipes(user_id: str):
-    """Simple endpoint to refresh a user's recipes"""
-    try:
-        if not is_primary_worker:
-            return jsonify({
-                'error': 'Not primary worker',
-                'message': 'Refresh can only be done on primary worker',
-                'user_id': user_id
-            }), 503
-
-        logger.info(f"🔄 Manually refreshing recipes for user {user_id}")
-        recipes_fetched = asyncio.run(recipe_fetcher.fetch_and_store_user_recipes(user_id, True))
-
-        return jsonify({
-            'success': True,
-            'user_id': user_id,
-            'recipes_fetched': recipes_fetched,
-            'message': f'Refreshed {recipes_fetched} recipes for user {user_id}',
-            'trending_url': f'/trending?user_id={user_id}&timeframe=24h'
-        })
-
-    except Exception as e:
-        logger.error(f"✗ Error refreshing recipes for user {user_id}: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': str(e),
-            'user_id': user_id
-        }), 500
 
 
 # ============================================================================
@@ -409,14 +377,15 @@ def recipe_fetch_worker():
     """Fetch recipes every hour, with immediate execution on startup"""
 
     # First, always fetch immediately on startup (catch up any missed hours)
-    logger.info("🚀 Starting immediate fetch on startup...")
-    try:
-        start_time = time.time()
-        recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
-        duration = time.time() - start_time
-        logger.info(f"✓ Startup fetch complete: {recipes_processed} recipes in {duration:.1f}s")
-    except Exception as e:
-        logger.error(f"✗ Startup fetch failed: {e}")
+    if db.should_fetch_all_recipes(max_hours=1):
+        logger.info("🚀 Starting immediate fetch on startup...")
+        try:
+            start_time = time.time()
+            recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
+            duration = time.time() - start_time
+            logger.info(f"✓ Startup fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+        except Exception as e:
+            logger.error(f"✗ Startup fetch failed: {e}")
 
     # Now run hourly
     while True:
