@@ -959,3 +959,87 @@ class Database:
             results.append(row_dict)
 
         return results
+
+
+
+    def get_last_hourly_snapshot_time(self) -> Optional[datetime]:
+        """Get the timestamp of the most recent hourly snapshot"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Ensure table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS recipe_hourly_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id TEXT NOT NULL,
+                installs INTEGER NOT NULL,
+                forks INTEGER NOT NULL,
+                popularity_score INTEGER NOT NULL,
+                snapshot_hour TEXT NOT NULL,
+                snapshot_timestamp TEXT NOT NULL,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+                UNIQUE(recipe_id, snapshot_hour)
+            )
+        """)
+
+        cursor.execute("""
+            SELECT MAX(snapshot_hour) as last_hour
+            FROM recipe_hourly_snapshots
+        """)
+
+        row = cursor.fetchone()
+        if row and row['last_hour']:
+            try:
+                # Parse the hour string (e.g., "2026-02-06T12:00:00Z")
+                hour_str = row['last_hour'].replace('Z', '+00:00')
+                return datetime.fromisoformat(hour_str)
+            except:
+                return None
+        return None
+
+
+    def get_missing_hours(self, max_hours_back: int = 24) -> List[datetime]:
+        """
+        Get list of hours that are missing snapshots in the last N hours
+        Returns: List of datetime objects (hour boundaries) that need snapshots
+        """
+        last_hourly = self.get_last_hourly_snapshot_time()
+        now = datetime.utcnow()
+
+        # If we have no snapshots at all, we need to create one for the current hour
+        if not last_hourly:
+            return [now.replace(minute=0, second=0, microsecond=0)]
+
+        missing_hours = []
+        current_hour = now.replace(minute=0, second=0, microsecond=0)
+
+        # Start from the hour after the last snapshot
+        next_hour = last_hourly.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+        # Collect all missing hours up to current hour (max 24 hours back)
+        while next_hour <= current_hour and len(missing_hours) < max_hours_back:
+            missing_hours.append(next_hour)
+            next_hour += timedelta(hours=1)
+
+        return missing_hours
+
+
+    def create_hourly_snapshot_for_hour(self, recipe_id: str, installs: int, forks: int, target_hour: datetime):
+        """
+        Create a historical hourly snapshot for a specific hour
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        snapshot_hour = target_hour.isoformat().replace('+00:00', 'Z')
+        snapshot_timestamp = target_hour.isoformat().replace('+00:00', 'Z')
+        popularity_score = installs + forks
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO recipe_hourly_snapshots 
+            (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp))
+
+        conn.commit()
+        logger.debug(f"💾 Created historical hourly snapshot for recipe {recipe_id} at {snapshot_hour}")

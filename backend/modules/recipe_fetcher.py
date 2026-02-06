@@ -254,3 +254,49 @@ class RecipeFetcher:
             except Exception as e:
                 logger.error(f"✗ Error fetching recipe {recipe_id}: {e}")
                 raise
+
+    async def catch_up_missing_hours(self, max_hours_back: int = 24) -> int:
+        """
+        Check for and fill in missing hourly snapshots
+        Returns: number of hours caught up
+        """
+        try:
+            # Get missing hours from database
+            missing_hours = self.database.get_missing_hours(max_hours_back)
+
+            if not missing_hours:
+                logger.info("✅ No missing hourly snapshots to catch up on")
+                return 0
+
+            logger.info(f"🕒 Found {len(missing_hours)} missing hours to catch up")
+
+            # For each missing hour, we need to get recipe stats at that time
+            # Since we can't get historical stats from the API, we'll use the most recent stats
+            # This is a limitation, but better than having gaps
+
+            # Get current recipes
+            current_recipes = self.database.get_all_recipes_current()
+
+            hours_caught_up = 0
+
+            for target_hour in missing_hours:
+                logger.info(f"  → Catching up hour {target_hour.strftime('%Y-%m-%d %H:00')}...")
+
+                # For each recipe, save a snapshot for this hour using current stats
+                # In a real system, you'd want to store historical stats, but this is a compromise
+                for recipe in current_recipes:
+                    self.database.create_hourly_snapshot_for_hour(
+                        recipe['id'],
+                        recipe['installs'],
+                        recipe['forks'],
+                        target_hour
+                    )
+
+                hours_caught_up += 1
+
+            logger.info(f"✅ Caught up {hours_caught_up} missing hours")
+            return hours_caught_up
+
+        except Exception as e:
+            logger.error(f"✗ Error catching up missing hours: {e}")
+            return 0

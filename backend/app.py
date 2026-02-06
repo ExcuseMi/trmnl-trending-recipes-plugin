@@ -222,41 +222,6 @@ def require_whitelisted_ip(f):
 # BACKGROUND JOBS
 # ============================================================================
 
-def recipe_fetch_worker():
-    """Background worker that fetches recipes and saves hourly snapshots"""
-    fetch_count = 0
-
-    while True:
-        try:
-            # Calculate time until next hour
-            now = datetime.now()
-            minutes_to_next_hour = 60 - now.minute
-            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
-
-            # Wait until next hour
-            logger.info(f"⏰ Recipe fetch #{fetch_count + 1}: Waiting {minutes_to_next_hour} minutes until next hour")
-            time.sleep(seconds_to_next_hour)
-
-            # Run the fetch
-            logger.info(f"🔄 Starting recipe fetch #{fetch_count + 1}...")
-            start_time = time.time()
-
-            recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
-            fetch_count += 1
-
-            duration = time.time() - start_time
-            logger.info(f"✓ Fetch #{fetch_count} complete: {recipes_processed} recipes in {duration:.1f}s")
-            logger.info(
-                f"⏰ Next fetch in {FETCH_INTERVAL_HOURS} hours (at {(now.hour + FETCH_INTERVAL_HOURS) % 24}:00)")
-
-            # Wait until next scheduled fetch time
-            time.sleep(FETCH_INTERVAL_HOURS * 3600 - 1)
-
-        except Exception as e:
-            logger.error(f"✗ Recipe fetch worker error: {e}")
-            # Wait 5 minutes before retrying on error
-            time.sleep(300)
-
 def start_recipe_fetch_worker():
     """Start background thread for recipe fetching"""
     worker_thread = threading.Thread(
@@ -677,21 +642,67 @@ def initialize():
 
     logger.info("✓ Application initialized successfully")
 
+
+def recipe_fetch_worker():
+    """Background worker that fetches recipes immediately, then hourly"""
+    fetch_count = 0
+
+    while True:
+        try:
+            # Run immediately on first iteration (catch-up)
+            if fetch_count > 0:
+                # Calculate time until next hour
+                now = datetime.now()
+                minutes_to_next_hour = 60 - now.minute
+                seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+
+                # Wait until next hour
+                logger.info(
+                    f"⏰ Recipe fetch #{fetch_count + 1}: Waiting {minutes_to_next_hour} minutes until next hour")
+                time.sleep(seconds_to_next_hour)
+
+            # Run the fetch
+            logger.info(f"🔄 Starting recipe fetch #{fetch_count + 1}...")
+            start_time = time.time()
+
+            recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
+            fetch_count += 1
+
+            duration = time.time() - start_time
+            logger.info(f"✓ Fetch #{fetch_count} complete: {recipes_processed} recipes in {duration:.1f}s")
+            logger.info(f"⏰ Next fetch in 1 hour")
+
+            # If this was the first run (immediate), wait until next hour
+            if fetch_count == 1:
+                now = datetime.now()
+                minutes_to_next_hour = 60 - now.minute
+                seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+                time.sleep(seconds_to_next_hour)
+
+        except Exception as e:
+            logger.error(f"✗ Recipe fetch worker error: {e}")
+            # Wait 5 minutes before retrying on error
+            time.sleep(300)
+
+
 def snapshot_cleanup_worker():
-    """Background worker that cleans up old snapshots"""
+    """Background worker that cleans up old snapshots immediately, then daily"""
     cleanup_count = 0
 
     while True:
         try:
-            # Calculate time until next hour
-            now = datetime.now()
-            minutes_to_next_hour = 60 - now.minute
-            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+            # Run immediately on first iteration
+            if cleanup_count > 0:
+                # Calculate time until next midnight
+                now = datetime.now()
+                seconds_until_midnight = ((24 - now.hour - 1) * 3600) + \
+                                         ((60 - now.minute - 1) * 60) + \
+                                         (60 - now.second)
 
-            # Wait until next hour
-            logger.info(
-                f"⏰ Snapshot cleanup #{cleanup_count + 1}: Waiting {minutes_to_next_hour} minutes until next hour")
-            time.sleep(seconds_to_next_hour)
+                # Wait until midnight
+                hours_until = seconds_until_midnight / 3600
+                logger.info(f"⏰ Snapshot cleanup #{cleanup_count + 1}: Waiting {hours_until:.1f} hours until midnight")
+                time.sleep(seconds_until_midnight)
 
             # Run cleanup
             logger.info(f"🗑️  Starting snapshot cleanup #{cleanup_count + 1}...")
@@ -700,24 +711,25 @@ def snapshot_cleanup_worker():
             # Clean up hourly snapshots older than 30 days
             hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=24 * 30)
 
-            # Clean up daily snapshots older than 180 days
-            daily_deleted = db.cleanup_old_daily_snapshots(days_to_keep=180)
-
             cleanup_count += 1
             duration = time.time() - start_time
 
             logger.info(
-                f"✓ Cleanup #{cleanup_count} complete: {hourly_deleted} hourly, {daily_deleted} daily snapshots in {duration:.1f}s")
+                f"✓ Cleanup #{cleanup_count} complete: {hourly_deleted} hourly snapshots cleaned in {duration:.1f}s")
             logger.info(f"⏰ Next cleanup in 24 hours")
 
-            # Wait until next day for cleanup
-            time.sleep(23 * 3600)  # Wait 23 hours
+            # If this was the first run (immediate), wait until next midnight
+            if cleanup_count == 1:
+                now = datetime.now()
+                seconds_until_midnight = ((24 - now.hour - 1) * 3600) + \
+                                         ((60 - now.minute - 1) * 60) + \
+                                         (60 - now.second)
+                time.sleep(seconds_until_midnight)
 
         except Exception as e:
             logger.error(f"✗ Snapshot cleanup error: {e}")
             # Wait 1 hour before retrying on error
             time.sleep(3600)
-
 
 def start_snapshot_cleanup_worker():
     """Start background thread for snapshot cleanup"""
