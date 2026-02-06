@@ -459,8 +459,19 @@ def initialize():
 
 
 def recipe_fetch_worker():
-    """Fetch recipes exactly on the hour, but skip if recently fetched"""
+    """Fetch recipes every hour, with immediate execution on startup"""
 
+    # First, always fetch immediately on startup (catch up any missed hours)
+    logger.info("🚀 Starting immediate fetch on startup...")
+    try:
+        start_time = time.time()
+        recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
+        duration = time.time() - start_time
+        logger.info(f"✓ Startup fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+    except Exception as e:
+        logger.error(f"✗ Startup fetch failed: {e}")
+
+    # Now run hourly
     while True:
         try:
             # Calculate time until next hour
@@ -469,29 +480,21 @@ def recipe_fetch_worker():
             seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
 
             # Wait until next hour
-            logger.info(f"⏰ Next fetch check at {(now.hour + 1) % 24}:00 ({minutes_to_next_hour} minutes)")
+            next_hour = (now.hour + 1) % 24
+            logger.info(f"⏰ Next fetch at {next_hour:02d}:00 ({minutes_to_next_hour} minutes)")
             time.sleep(seconds_to_next_hour)
 
-            # Now it's exactly the hour, check if we should fetch
-            should_fetch = db.should_fetch_all_recipes(max_hours=1)
-
-            if should_fetch:
-                logger.info(f"🔄 Starting fetch at {datetime.now().hour}:00...")
-                start_time = time.time()
-                recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
-                duration = time.time() - start_time
-                logger.info(f"✓ Hourly fetch complete: {recipes_processed} recipes in {duration:.1f}s")
-            else:
-                last_fetch = db.get_last_recipe_fetch_time()
-                if last_fetch:
-                    hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
-                    logger.info(f"⏰ Skipping fetch at {datetime.now().hour}:00 (last fetch {hours_since:.1f}h ago)")
+            # Fetch at exactly the hour
+            logger.info(f"🔄 Starting fetch at {datetime.now().hour:02d}:00...")
+            start_time = time.time()
+            recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
+            duration = time.time() - start_time
+            logger.info(f"✓ Hourly fetch complete: {recipes_processed} recipes in {duration:.1f}s")
 
         except Exception as e:
             logger.error(f"✗ Recipe fetch worker error: {e}")
             # Wait 5 minutes before retrying on error
             time.sleep(300)
-
 
 def snapshot_cleanup_worker():
     """Clean up old snapshots daily at midnight"""
