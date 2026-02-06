@@ -1,0 +1,23 @@
+---
+strategy: polling
+no_screen_padding: 'no'
+dark_mode: 'no'
+static_data: ''
+polling_verb: get
+polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}
+polling_headers: ''
+polling_body: ''
+id: 239013
+custom_fields:
+- keyname: author_bio
+  field_type: author_bio
+  name: About This Plugin
+- keyname: timeframe
+  field_type: select
+  name: Timeframe
+  default: 24h
+  options:
+  - Today: today
+  - 24h: 24h
+name: Trending Recipes
+refresh_interval: 60

@@ -1,0 +1,111 @@
+<div class="layout layout--stretch">
+  <div class="columns" data-overflow-cols="2">
+    <div class="column">
+      {% for recipe in recipes %}
+      {% assign current_index = forloop.index %}
+
+      {% comment %} Calculate popularity change {% endcomment %}
+      {% assign delta = recipe.popularity_delta | default: 0 %}
+      {% assign is_positive = delta > 0 %}
+      {% assign is_negative = delta < 0 %}
+        {% assign delta_abs = delta | abs %}
+        {% assign growth_pct = recipe.popularity_growth_pct | default: 0 %}
+
+        {% comment %} Check if recipe is new (less than 7 days old) - FIXED {% endcomment %}
+        {% assign recipe_age_days = recipe.recipe_age_days %}
+        {% if recipe_age_days == nil or recipe_age_days == blank %}
+        {% assign is_new_recipe = false %}
+        {% assign show_age = false %}
+        {% else %}
+        {% if recipe_age_days <= 7 %}
+          {% assign is_new_recipe = true %}
+          {% else %}
+          {% assign is_new_recipe = false %}
+          {% endif %}
+          {% assign show_age = true %}
+          {% endif %}
+
+          {% comment %} Format percentage {% endcomment %}
+          {% if growth_pct > 999 %}
+          {% assign growth_display = "999+" %}
+          {% elsif growth_pct < -999 %}
+            {% assign growth_display = "-999+" %}
+            {% else %}
+            {% assign growth_display = growth_pct | round: 1 %}
+            {% endif %}
+
+            <div class="item {% if forloop.index == 1 %}outline{% endif %}">
+              {% if recipe.icon_url %}
+              <img class="image w--8 h--8" 
+                src="{{recipe.icon_url}}" 
+                alt="{{ recipe.name }} icon"
+                onerror="this.style.display='none'; this.parentNode.innerHTML='<span class=\'w--8 h--8\'></span>';" />
+              {% else %}
+              <span class="w--8 h--8"></span>
+              {% endif %}
+
+              <div class="content pl--1">
+                <div class="title title--small" title="{{ recipe.description | strip_html | truncate: 100 }}">
+                  {{ recipe.name }}
+
+                  {% comment %} NEW badge - Only show if actually new {% endcomment %}
+                  {% if is_new_recipe %}
+                  <span class="label label--inverted" title="Published {{ recipe_age_days | round: 1 }} days ago">
+                    NEW
+                  </span>
+                  {% endif %}
+                </div>
+
+                <div class="description">
+                  {% comment %} Popularity change indicator {% endcomment %}
+                  {% if is_positive %}
+                  <span class="label label--positive" title="Gained {{ delta_abs }} popularity">
+                    ▲ {{ delta_abs }}
+                  </span>
+                  {% if growth_pct > 0 %}
+                  <span class="label label--positive ml--0_5" title="{{ growth_display }}% growth">
+                    (+{{ growth_display }}%)
+                  </span>
+                  {% endif %}
+                  {% elsif is_negative %}
+                  <span class="label label--negative" title="Lost {{ delta_abs }} popularity">
+                    ▼ {{ delta_abs }}
+                  </span>
+                  {% if growth_pct < 0 %}
+                    <span class="label label--negative ml--0_5" title="{{ growth_display }}% decline">
+                      ({{ growth_display }}%)
+                    </span>
+                    {% endif %}
+                    {% else %}
+                    <span class="label label--neutral" title="No change">
+                      ● 0
+                    </span>
+                    {% endif %}
+
+                    {% comment %} Total popularity {% endcomment %}
+                    <span class="label label--gray ml--0_5" title="Total popularity">
+                      ({{ recipe.popularity | default: 0 }})
+                    </span>
+
+                    {% comment %} Age indicator (for new recipes only) {% endcomment %}
+                    {% if show_age and is_new_recipe %}
+                    <span class="label label--age ml--0_5" title="Published {{ recipe_age_days | round: 1 }} days ago">
+                      {{ recipe_age_days | round: 0 }}d
+                    </span>
+                    {% endif %}
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          </div>
+          </div>
+
+            <div class="title_bar">
+              <img class="image" src="/images/plugins/trmnl--render.svg">
+              <div class="title">Trending Recipes</div>
+
+              <div class="instance" title="Time period for trending calculation">
+                {{ trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" | upcase }}
+              </div>
+            </div>
