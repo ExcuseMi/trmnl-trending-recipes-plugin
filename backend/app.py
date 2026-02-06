@@ -442,6 +442,62 @@ def get_recipe(recipe_id):
         }), 500
 
 
+@app.route('/debug/recipe/<recipe_id>/history', methods=['GET'])
+def debug_recipe_history(recipe_id):
+    """Debug why a recipe has no historical data"""
+    try:
+        # Get recipe info
+        recipe = db.get_recipe_current(recipe_id)
+        if not recipe:
+            return jsonify({'error': 'Recipe not found'}), 404
+
+        # Get all snapshots
+        conn = db.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT snapshot_date, snapshot_timestamp, installs, forks
+            FROM recipe_history
+            WHERE recipe_id = ?
+            ORDER BY snapshot_date DESC
+            LIMIT 10
+        """, (recipe_id,))
+
+        snapshots = [dict(row) for row in cursor.fetchall()]
+
+        # Check for yesterday's date
+        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+        has_yesterday = any(s['snapshot_date'] == yesterday for s in snapshots)
+
+        # Check cutoff for "today"
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff_iso = cutoff.isoformat()
+
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM recipe_history
+            WHERE recipe_id = ?
+            AND snapshot_timestamp <= ?
+        """, (recipe_id, cutoff_iso))
+
+        has_before_cutoff = cursor.fetchone()['count'] > 0
+
+        return jsonify({
+            'recipe_id': recipe_id,
+            'published_at': recipe.get('created_at'),
+            'recipe_age_days': (datetime.utcnow() - datetime.fromisoformat(
+                recipe['created_at'].replace('Z', ''))).total_seconds() / 86400 if recipe.get('created_at') else 0,
+            'total_snapshots': len(snapshots),
+            'snapshots': snapshots,
+            'has_yesterday_snapshot': has_yesterday,
+            'has_snapshot_before_24h_cutoff': has_before_cutoff,
+            'cutoff_time': cutoff_iso,
+            'yesterday_date': yesterday,
+            'diagnosis': 'Recipe is old but missing recent snapshots' if not has_yesterday else 'Has yesterday snapshot'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 @app.route('/trending/today', methods=['GET'])
 @require_whitelisted_ip
 def get_trending_today():
