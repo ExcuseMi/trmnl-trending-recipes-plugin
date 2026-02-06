@@ -484,63 +484,47 @@ def debug_snapshots_overview():
         'coverage': coverage,
         'diagnosis': 'Missing yesterday snapshots' if len(dates) < 2 else 'Has multiple days'
     })
-@app.route('/debug/recipe/<recipe_id>/history', methods=['GET'])
-def debug_recipe_history(recipe_id):
-    """Debug why a recipe has no historical data"""
-    try:
-        # Get recipe info
-        recipe = db.get_recipe_current(recipe_id)
-        if not recipe:
-            return jsonify({'error': 'Recipe not found'}), 404
 
-        # Get all snapshots
-        conn = db.get_connection()
-        cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT snapshot_date, snapshot_timestamp, installs, forks
-            FROM recipe_history
-            WHERE recipe_id = ?
-            ORDER BY snapshot_date DESC
-            LIMIT 10
-        """, (recipe_id,))
+# Add this debug endpoint
+@app.route('/debug/recipe/<recipe_id>/snapshots', methods=['GET'])
+def debug_recipe_snapshots(recipe_id):
+    """Check all snapshots for a recipe"""
+    conn = db.get_connection()
+    cursor = conn.cursor()
 
-        snapshots = [dict(row) for row in cursor.fetchall()]
+    cursor.execute("""
+        SELECT snapshot_date, snapshot_timestamp, installs, forks, popularity_score
+        FROM recipe_history
+        WHERE recipe_id = ?
+        ORDER BY snapshot_date
+    """, (recipe_id,))
 
-        # Check for yesterday's date
-        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
-        has_yesterday = any(s['snapshot_date'] == yesterday for s in snapshots)
+    snapshots = [dict(row) for row in cursor.fetchall()]
 
-        # Check cutoff for "today"
-        cutoff = datetime.utcnow() - timedelta(hours=24)
-        cutoff_iso = cutoff.isoformat()
+    # Get recipe info
+    cursor.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,))
+    recipe = dict(cursor.fetchone()) if cursor.fetchone() else None
 
-        cursor.execute("""
-            SELECT COUNT(*) as count
-            FROM recipe_history
-            WHERE recipe_id = ?
-            AND snapshot_timestamp <= ?
-        """, (recipe_id, cutoff_iso))
+    return (jsonify({
+        'recipe_id': recipe_id,
+        'recipe': recipe,
+        'snapshots': snapshots,
+        'analysis': {
+            'has_yesterday': any(s['snapshot_date'] == '2026-02-05' for s in snapshots),
+            'has_today': any(s['snapshot_date'] == '2026-02-06' for s in snapshots),
+            'yesterday_stats': next((s for s in snapshots if s['snapshot_date'] == '2026-02-05'), None),
+            'today_stats': next((s for s in snapshots if s['snapshot_date'] == '2026-02-06'), None),
+            'delta': {
+                'installs': snapshots[-1]['installs'] - snapshots[0]['installs'] if len(snapshots) >= 2 else 0,
+                'forks': snapshots[-1]['forks'] - snapshots[0]['forks'] if len(snapshots) >= 2 else 0,
+                'popularity': snapshots[-1]['popularity_score'] - snapshots[0]['popularity_score'] if len(
+                    snapshots) >= 2 else 0
+            } if len(snapshots) >= 2 else None
+        }
+    })
 
-        has_before_cutoff = cursor.fetchone()['count'] > 0
-
-        return jsonify({
-            'recipe_id': recipe_id,
-            'published_at': recipe.get('created_at'),
-            'recipe_age_days': (datetime.utcnow() - datetime.fromisoformat(
-                recipe['created_at'].replace('Z', ''))).total_seconds() / 86400 if recipe.get('created_at') else 0,
-            'total_snapshots': len(snapshots),
-            'snapshots': snapshots,
-            'has_yesterday_snapshot': has_yesterday,
-            'has_snapshot_before_24h_cutoff': has_before_cutoff,
-            'cutoff_time': cutoff_iso,
-            'yesterday_date': yesterday,
-            'diagnosis': 'Recipe is old but missing recent snapshots' if not has_yesterday else 'Has yesterday snapshot'
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-@app.route('/trending/today', methods=['GET'])
+@app.route('/trending/today', methods=['GET']))
 @require_whitelisted_ip
 def get_trending_today():
     """Get trending since local midnight today"""
