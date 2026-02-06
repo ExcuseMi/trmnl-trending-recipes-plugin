@@ -254,26 +254,59 @@ class TrendingCalculator:
                                              utc_offset_seconds: int = 0,
                                              cutoff_iso: str = None) -> float:
         """
-        Trending calculation - SIMPLE AND CORRECT
+        Calculate trending score with improved "today" handling
         """
         try:
             has_history = recipe.get('has_historical_data', False)
             popularity_delta = recipe.get('popularity_delta', 0) or 0
 
-            # CRITICAL: For "today" trending, we need yesterday's snapshot
-            # If we don't have it, we can't calculate
-            if timeframe == 'today' and not has_history:
-                return 0.0
+            # For "today" trending with hourly updates:
+            if timeframe == 'today':
+                # Get the most recent snapshot timestamp
+                conn = self.database.get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT MAX(snapshot_timestamp) as latest_snapshot
+                    FROM recipe_history 
+                    WHERE recipe_id = ?
+                """, (recipe['id'],))
 
-            # For other timeframes, we might still calculate with available data
-            if has_history and popularity_delta > 0:
-                if timeframe == 'today':
-                    # Normalize by hours passed today
+                row = cursor.fetchone()
+                latest_snapshot = row['latest_snapshot'] if row else None
+
+                if latest_snapshot:
+                    # Calculate how many hours since last snapshot
+                    try:
+                        latest_dt = datetime.fromisoformat(latest_snapshot.replace('Z', ''))
+                        hours_since_snapshot = (datetime.utcnow() - latest_dt).total_seconds() / 3600
+
+                        # If snapshot is very recent (< 2 hours), use it
+                        if hours_since_snapshot < 2 and popularity_delta > 0:
+                            # Normalize to hourly rate
+                            return float(popularity_delta) / max(0.1, hours_since_snapshot / 24)
+                    except Exception:
+                        pass
+
+                # Fallback to normal calculation
+                if has_history and popularity_delta > 0:
                     if cutoff_iso:
                         try:
-                            cutoff_str = cutoff_iso.replace('Z', '')
-                            cutoff = datetime.strptime(cutoff_str, '%Y-%m-%dT%H:%M:%S.%f')
-                            hours_passed = (datetime.utcnow() - cutoff).total_seconds() / 3600
+                            hours_passed = (datetime.utcnow() - datetime.fromisoformat(
+                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
+                            days = max(0.1, hours_passed / 24)
+                        except Exception:
+                            days = 1.0
+                    else:
+                        days = 1.0
+                    return float(popularity_delta) / days
+
+            # Normal calculation for other timeframes
+            if has_history and popularity_delta > 0:
+                if timeframe == 'today':
+                    if cutoff_iso:
+                        try:
+                            hours_passed = (datetime.utcnow() - datetime.fromisoformat(
+                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
                             days = max(0.1, hours_passed / 24)
                         except Exception:
                             days = 1.0
@@ -281,7 +314,6 @@ class TrendingCalculator:
                         days = 1.0
                     return float(popularity_delta) / days
                 else:
-                    # Rolling windows
                     timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
                     hours = timeframe_info.get('hours', 24)
                     days = max(0.1, hours / 24)
@@ -292,7 +324,6 @@ class TrendingCalculator:
         except Exception as e:
             logger.error(f"Error: {e}")
             return 0.0
-
     def _calculate_conservative_score(self, has_history: bool, popularity_delta: int,
                                       timeframe: str, cutoff_iso: str = None) -> float:
         """

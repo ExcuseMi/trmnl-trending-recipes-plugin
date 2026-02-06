@@ -224,6 +224,8 @@ def require_whitelisted_ip(f):
 
 def recipe_fetch_worker():
     """Background worker that fetches recipes exactly on the hour"""
+    fetch_count = 0
+
     while True:
         try:
             # Calculate time until next hour
@@ -232,28 +234,28 @@ def recipe_fetch_worker():
             seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
 
             # Wait until next hour
-            logger.info(f"⏰ Recipe fetch: Waiting {minutes_to_next_hour} minutes until next hour")
+            logger.info(f"⏰ Recipe fetch #{fetch_count + 1}: Waiting {minutes_to_next_hour} minutes until next hour")
             time.sleep(seconds_to_next_hour)
 
             # Run the fetch
-            logger.info("🔄 Starting recipe fetch job...")
-            asyncio.run(recipe_fetcher.fetch_all_recipes())
+            logger.info(f"🔄 Starting recipe fetch #{fetch_count + 1}...")
+            start_time = time.time()
 
-            # Calculate next fetch time
-            logger.info(f"✓ Recipe fetch complete. Next fetch in {FETCH_INTERVAL_HOURS} hours")
+            recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
+            fetch_count += 1
 
-            # Wait until next scheduled fetch time (aligned to hour)
-            time.sleep(FETCH_INTERVAL_HOURS * 3600 - 1)  # Subtract 1 second to stay aligned
+            duration = time.time() - start_time
+            logger.info(f"✓ Fetch #{fetch_count} complete: {recipes_processed} recipes in {duration:.1f}s")
+            logger.info(
+                f"⏰ Next fetch in {FETCH_INTERVAL_HOURS} hours (at {(now.hour + FETCH_INTERVAL_HOURS) % 24}:00)")
+
+            # Wait until next scheduled fetch time
+            time.sleep(FETCH_INTERVAL_HOURS * 3600 - 1)
 
         except Exception as e:
             logger.error(f"✗ Recipe fetch worker error: {e}")
-            # On error, wait until next hour before retrying
-            now = datetime.now()
-            minutes_to_next_hour = 60 - now.minute
-            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
-            logger.info(f"⏰ Recipe fetch: Retrying in {minutes_to_next_hour} minutes")
-            time.sleep(seconds_to_next_hour)
-
+            # Wait 5 minutes before retrying on error
+            time.sleep(300)
 
 def start_recipe_fetch_worker():
     """Start background thread for recipe fetching"""
@@ -522,9 +524,9 @@ def debug_recipe_snapshots(recipe_id):
                     snapshots) >= 2 else 0
             } if len(snapshots) >= 2 else None
         }
-    })
+    }))
 
-@app.route('/trending/today', methods=['GET']))
+@app.route('/trending/today', methods=['GET'])
 @require_whitelisted_ip
 def get_trending_today():
     """Get trending since local midnight today"""
