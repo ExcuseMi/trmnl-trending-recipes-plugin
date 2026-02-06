@@ -532,7 +532,8 @@ class Database:
                 h.installs as past_installs,
                 h.forks as past_forks,
                 h.popularity_score as past_popularity,
-                h.snapshot_timestamp as past_snapshot_timestamp
+                h.snapshot_timestamp as past_snapshot_timestamp,
+                CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
             LEFT JOIN (
                 -- Get the most recent snapshot BEFORE cutoff for each recipe
@@ -549,10 +550,23 @@ class Database:
                 FROM recipe_history
                 WHERE snapshot_timestamp <= ?
             ) h ON r.id = h.recipe_id AND h.rn = 1
-            WHERE h.snapshot_timestamp IS NOT NULL  -- Only include recipes with history before cutoff
+            -- REMOVED the WHERE clause to include ALL recipes
         """, (cutoff_iso,))
 
-        return [dict(row) for row in cursor.fetchall()]
+        results = []
+        for row in cursor.fetchall():
+            row_dict = dict(row)
+            # Convert NULL to None for consistency
+            if row_dict['past_installs'] is None:
+                row_dict['past_installs'] = 0
+                row_dict['past_forks'] = 0
+                row_dict['past_popularity'] = 0
+                row_dict['has_history'] = False
+            else:
+                row_dict['has_history'] = True
+            results.append(row_dict)
+
+        return results
 
     def get_recipe_delta_since(self, recipe_id: str, cutoff: datetime) -> Optional[Dict]:
         """
