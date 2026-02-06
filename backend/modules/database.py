@@ -1043,3 +1043,42 @@ class Database:
 
         conn.commit()
         logger.debug(f"💾 Created historical hourly snapshot for recipe {recipe_id} at {snapshot_hour}")
+
+    def should_refresh_user_recipes(self, user_id: str, max_hours: int = 24) -> bool:
+        """
+        Check if we should refresh user recipes based on last fetch time
+        Returns: True if we should refresh, False if recent data exists
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Check if we have any recipes for this user
+        cursor.execute("SELECT COUNT(*) as count FROM recipes WHERE user_id = ?", (user_id,))
+        count = cursor.fetchone()['count']
+
+        if count == 0:
+            # No recipes at all for this user, definitely refresh
+            return True
+
+        # Check when we last fetched any recipe for this user
+        cursor.execute("""
+            SELECT MAX(last_fetched) as last_fetch_time 
+            FROM recipes 
+            WHERE user_id = ?
+        """, (user_id,))
+
+        row = cursor.fetchone()
+        if not row or not row['last_fetch_time']:
+            # No last_fetched timestamp, refresh
+            return True
+
+        try:
+            # Parse the last fetch time
+            last_fetch = datetime.fromisoformat(row['last_fetch_time'].replace('Z', '+00:00'))
+            hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
+
+            # Refresh if older than max_hours
+            return hours_since > max_hours
+        except:
+            # Error parsing, refresh to be safe
+            return True

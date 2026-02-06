@@ -281,8 +281,6 @@ def health():
     })
 
 
-# Replace the existing /trending endpoint with:
-
 @app.route('/trending', methods=['GET'])
 @app.route('/trending/', methods=['GET'])
 @require_whitelisted_ip
@@ -296,10 +294,12 @@ def get_trending():
     - limit: number of results (default: 10)
     - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
     - user_id: Optional user ID to filter recipes by user
+    - refresh: Force refresh user recipes (default: false)
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
     user_id = request.args.get('user_id')
+    force_refresh = request.args.get('refresh', 'false').lower() == 'true'
 
     # Get UTC offset
     try:
@@ -311,12 +311,46 @@ def get_trending():
         }), 400
 
     try:
+        # If user_id is provided, ensure we have their recipes
+        if user_id:
+            # Check if we need to refresh
+            should_refresh = force_refresh or db.should_refresh_user_recipes(user_id)
+
+            if should_refresh and is_primary_worker:
+                logger.info(f"🔄 Fetching recipes for user {user_id} (force: {force_refresh})")
+                recipes_fetched = asyncio.run(recipe_fetcher.fetch_and_store_user_recipes(user_id, force_refresh))
+                if recipes_fetched == 0 and force_refresh:
+                    # If force refresh returned 0, user might have no recipes
+                    return jsonify({
+                        'user_id': user_id,
+                        'message': 'User has no recipes or could not fetch them',
+                        'recipes_fetched': 0,
+                        'timeframe': timeframe,
+                        'trending_recipes': []
+                    })
+
+            elif should_refresh and not is_primary_worker:
+                # If we're not primary but need to refresh, suggest using primary
+                logger.warning(f"⚠️ User {user_id} needs refresh but this is not primary worker")
+                # We'll still proceed with potentially stale data
+
+        # Calculate trending (this will filter by user_id if provided)
         trending_data = trending_calculator.calculate_trending(
             timeframe=timeframe,
             limit=limit,
             utc_offset_seconds=utc_offset,
             user_id=user_id
         )
+
+        # Add user info if user_id was provided
+        if user_id:
+            user_recipes = db.get_recipes_by_user(user_id)
+            trending_data['user_info'] = {
+                'user_id': user_id,
+                'total_recipes': len(user_recipes),
+                'needs_refresh': db.should_refresh_user_recipes(user_id),
+                'suggest_refresh': len(user_recipes) == 0
+            }
 
         return jsonify(trending_data)
 
@@ -330,286 +364,64 @@ def get_trending():
         logger.error(f"✗ Error calculating trending: {e}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e)
+            'message': str(e),
+            'user_id': user_id if user_id else None
         }), 500
 
 
-@app.route('/trending/all', methods=['GET'])
+@app.route('/api/user/<user_id>/refresh', methods=['POST'])
 @require_whitelisted_ip
-def get_all_trending():
-    """
-    Get trending recipes for all timeframes at once
-    """
+def refresh_user_recipes(user_id: str):
+    """Simple endpoint to refresh a user's recipes"""
     try:
-        utc_offset = int(request.args.get('utc_offset', '0'))
-    except ValueError:
-        return jsonify({
-            'error': 'Invalid UTC offset',
-            'message': 'UTC offset must be an integer number of seconds'
-        }), 400
+        if not is_primary_worker:
+            return jsonify({
+                'error': 'Not primary worker',
+                'message': 'Refresh can only be done on primary worker',
+                'user_id': user_id
+            }), 503
 
-    limit = int(request.args.get('limit', '10'))
-
-    try:
-        all_trending = trending_calculator.get_all_timeframes_trending(
-            limit=limit,
-            utc_offset_seconds=utc_offset
-        )
+        logger.info(f"🔄 Manually refreshing recipes for user {user_id}")
+        recipes_fetched = asyncio.run(recipe_fetcher.fetch_and_store_user_recipes(user_id, True))
 
         return jsonify({
-            'timeframes': all_trending,
-            'utc_offset_seconds': utc_offset,
-            'current_time': datetime.utcnow().isoformat()
+            'success': True,
+            'user_id': user_id,
+            'recipes_fetched': recipes_fetched,
+            'message': f'Refreshed {recipes_fetched} recipes for user {user_id}',
+            'trending_url': f'/trending?user_id={user_id}&timeframe=24h'
         })
 
     except Exception as e:
-        logger.error(f"✗ Error calculating all trending: {e}")
+        logger.error(f"✗ Error refreshing recipes for user {user_id}: {e}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/trending/timeframes', methods=['GET'])
-def get_timeframes():
-    """
-    Get information about available trending timeframes
-    """
-    timeframes_info = {}
-
-    for timeframe, info in trending_calculator.TIMEFRAMES.items():
-        timeframes_info[timeframe] = {
-            'type': info['type'],
-            'description': info['description'],
-            'hours': info.get('hours'),
-            'example_url': f"/trending?timeframe={timeframe}&utc_offset=3600"
-        }
-
-    return jsonify({
-        'available_timeframes': timeframes_info,
-        'recommended_for_new_users': ['24h', '7d', '30d'],
-        'note': 'Calendar timeframes (today, week) require sufficient historical data'
-    })
-
-@app.route('/api/recipe/<recipe_id>', methods=['GET'])
-@require_whitelisted_ip
-def get_recipe(recipe_id):
-    """Get details for a specific recipe"""
-    try:
-        recipe = db.get_recipe_current(recipe_id)
-        if not recipe:
-            return jsonify({
-                'error': 'Not found',
-                'message': f'Recipe {recipe_id} not found'
-            }), 404
-
-        return jsonify(recipe)
-    except Exception as e:
-        logger.error(f"✗ Error fetching recipe: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/debug/snapshots-overview', methods=['GET'])
-def debug_snapshots_overview():
-    """Check snapshot coverage"""
-    conn = db.get_connection()
-    cursor = conn.cursor()
-
-    # Get all snapshot dates
-    cursor.execute("""
-        SELECT 
-            snapshot_date,
-            COUNT(*) as recipe_count,
-            MIN(snapshot_timestamp) as earliest,
-            MAX(snapshot_timestamp) as latest
-        FROM recipe_history
-        GROUP BY snapshot_date
-        ORDER BY snapshot_date DESC
-    """)
-
-    dates = [dict(row) for row in cursor.fetchall()]
-
-    # Get total recipe count
-    cursor.execute("SELECT COUNT(*) as count FROM recipes")
-    total_recipes = cursor.fetchone()['count']
-
-    # Check which dates have coverage
-    coverage = {}
-    for date_info in dates:
-        date = date_info['snapshot_date']
-        coverage_pct = (date_info['recipe_count'] / total_recipes * 100) if total_recipes > 0 else 0
-        coverage[date] = {
-            'recipe_count': date_info['recipe_count'],
-            'coverage_pct': round(coverage_pct, 1),
-            'earliest': date_info['earliest'],
-            'latest': date_info['latest']
-        }
-
-    return jsonify({
-        'total_recipes': total_recipes,
-        'snapshot_dates': dates,
-        'coverage': coverage,
-        'diagnosis': 'Missing yesterday snapshots' if len(dates) < 2 else 'Has multiple days'
-    })
-
-
-# Add this debug endpoint
-@app.route('/debug/recipe/<recipe_id>/snapshots', methods=['GET'])
-def debug_recipe_snapshots(recipe_id):
-    """Check all snapshots for a recipe"""
-    conn = db.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT snapshot_date, snapshot_timestamp, installs, forks, popularity_score
-        FROM recipe_history
-        WHERE recipe_id = ?
-        ORDER BY snapshot_date
-    """, (recipe_id,))
-
-    snapshots = [dict(row) for row in cursor.fetchall()]
-
-    # Get recipe info
-    cursor.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,))
-    recipe = dict(cursor.fetchone()) if cursor.fetchone() else None
-
-    return (jsonify({
-        'recipe_id': recipe_id,
-        'recipe': recipe,
-        'snapshots': snapshots,
-        'analysis': {
-            'has_yesterday': any(s['snapshot_date'] == '2026-02-05' for s in snapshots),
-            'has_today': any(s['snapshot_date'] == '2026-02-06' for s in snapshots),
-            'yesterday_stats': next((s for s in snapshots if s['snapshot_date'] == '2026-02-05'), None),
-            'today_stats': next((s for s in snapshots if s['snapshot_date'] == '2026-02-06'), None),
-            'delta': {
-                'installs': snapshots[-1]['installs'] - snapshots[0]['installs'] if len(snapshots) >= 2 else 0,
-                'forks': snapshots[-1]['forks'] - snapshots[0]['forks'] if len(snapshots) >= 2 else 0,
-                'popularity': snapshots[-1]['popularity_score'] - snapshots[0]['popularity_score'] if len(
-                    snapshots) >= 2 else 0
-            } if len(snapshots) >= 2 else None
-        }
-    }))
-
-@app.route('/trending/today', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_today():
-    """Get trending since local midnight today"""
-    return redirect_trending('today')
-
-
-@app.route('/trending/24h', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_24h():
-    """Get trending for last 24 hours (rolling)"""
-    return redirect_trending('24h')
-
-
-@app.route('/trending/week', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_week():
-    """Get trending since start of week (Monday)"""
-    return redirect_trending('week')
-
-
-@app.route('/trending/7d', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_7d():
-    """Get trending for last 7 days (rolling)"""
-    return redirect_trending('7d')
-
-
-@app.route('/trending/30d', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_30d():
-    """Get trending for last 30 days (rolling)"""
-    return redirect_trending('30d')
-
-
-def redirect_trending(timeframe: str):
-    """Helper to redirect specific timeframe endpoints to main trending"""
-    args = request.args.copy()
-    args['timeframe'] = timeframe
-
-    # Build query string
-    query_string = '&'.join([f"{k}={v}" for k, v in args.items()])
-
-    # Use internal redirect to avoid external redirect
-    with app.test_request_context(f'/trending?{query_string}'):
-        return get_trending()
-
-
-@app.route('/trending/user/<user_id>', methods=['GET'])
-@require_whitelisted_ip
-def get_trending_for_user(user_id: str):
-    """
-    Get trending recipes for a specific user
-
-    Query parameters:
-    - timeframe: 1h, today, week, 24h, 7d, 30d, 180d (default: 24h)
-    - limit: number of results (default: 10)
-    - utc_offset: UTC offset in seconds (default: 0)
-    """
-    timeframe = request.args.get('timeframe', '24h')
-    limit = int(request.args.get('limit', '10'))
-
-    try:
-        utc_offset = int(request.args.get('utc_offset', '0'))
-    except ValueError:
-        return jsonify({
-            'error': 'Invalid UTC offset',
-            'message': 'UTC offset must be an integer number of seconds'
-        }), 400
-
-    try:
-        trending_data = trending_calculator.calculate_trending(
-            timeframe=timeframe,
-            limit=limit,
-            utc_offset_seconds=utc_offset,
-            user_id=user_id
-        )
-
-        return jsonify(trending_data)
-
-    except ValueError as e:
-        return jsonify({
-            'error': 'Invalid timeframe',
             'message': str(e),
-            'valid_timeframes': list(trending_calculator.TIMEFRAMES.keys())
-        }), 400
-    except Exception as e:
-        logger.error(f"✗ Error calculating trending for user {user_id}: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': str(e)
+            'user_id': user_id
         }), 500
 
-@app.route('/api/stats', methods=['GET'])
+
+@app.route('/api/user/<user_id>/recipes', methods=['GET'])
 @require_whitelisted_ip
-def get_stats():
-    """Get overall statistics"""
+def get_user_recipes_simple(user_id: str):
+    """Simple endpoint to get user's recipes"""
     try:
-        # Get UTC offset from query parameter
-        try:
-            utc_offset = int(request.args.get('utc_offset', '0'))
-        except ValueError:
-            utc_offset = 0
+        recipes = db.get_recipes_by_user(user_id)
 
-        stats = db.get_statistics()
-        stats['utc_offset_seconds'] = utc_offset
-        stats['local_midnight'] = get_local_midnight(utc_offset).isoformat()
-        return jsonify(stats)
+        return jsonify({
+            'user_id': user_id,
+            'recipes': recipes,
+            'count': len(recipes),
+            'needs_refresh': db.should_refresh_user_recipes(user_id)
+        })
+
     except Exception as e:
-        logger.error(f"✗ Error fetching stats: {e}")
+        logger.error(f"✗ Error getting recipes for user {user_id}: {e}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e)
+            'message': str(e),
+            'user_id': user_id
         }), 500
-
-
 # ============================================================================
 # STARTUP
 # ============================================================================

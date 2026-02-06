@@ -300,3 +300,46 @@ class RecipeFetcher:
         except Exception as e:
             logger.error(f"✗ Error catching up missing hours: {e}")
             return 0
+
+    async def fetch_and_store_user_recipes(self, user_id: str, force_refresh: bool = False) -> int:
+        """
+        Simple method to fetch and store recipes for a user
+        Returns: number of recipes fetched/stored
+        """
+        try:
+            logger.info(f"📥 Fetching recipes for user {user_id}...")
+
+            url = f"https://trmnl.com/recipes.json?user_id={user_id}"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                recipes_data = response.json()
+
+                recipes_processed = 0
+                for recipe_data in recipes_data:
+                    try:
+                        # Parse the recipe with user_id
+                        recipe = self.parse_recipe(recipe_data, user_id)
+
+                        # Always update the recipe (simple upsert)
+                        self.database.upsert_recipe(recipe)
+
+                        # Save hourly snapshot
+                        self.database.save_hourly_snapshot(
+                            recipe['id'],
+                            recipe['installs'],
+                            recipe['forks']
+                        )
+
+                        recipes_processed += 1
+
+                    except Exception as e:
+                        logger.error(f"✗ Error processing recipe for user {user_id}: {e}")
+                        continue
+
+                logger.info(f"✅ Fetched {recipes_processed} recipes for user {user_id}")
+                return recipes_processed
+
+        except Exception as e:
+            logger.error(f"✗ Error fetching recipes for user {user_id}: {e}")
+            return 0
