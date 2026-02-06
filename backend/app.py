@@ -295,9 +295,11 @@ def get_trending():
                  or legacy: 1d, 1w, 1m, 6m
     - limit: number of results (default: 10)
     - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
+    - user_id: Optional user ID to filter recipes by user
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
+    user_id = request.args.get('user_id')
 
     # Get UTC offset
     try:
@@ -312,7 +314,8 @@ def get_trending():
         trending_data = trending_calculator.calculate_trending(
             timeframe=timeframe,
             limit=limit,
-            utc_offset_seconds=utc_offset
+            utc_offset_seconds=utc_offset,
+            user_id=user_id
         )
 
         return jsonify(trending_data)
