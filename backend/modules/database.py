@@ -1082,3 +1082,31 @@ class Database:
         except:
             # Error parsing, refresh to be safe
             return True
+
+
+    def get_last_recipe_fetch_time(self) -> Optional[datetime]:
+        """Get when recipes were last fetched"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT MAX(last_fetched) as last_fetch FROM recipes")
+        row = cursor.fetchone()
+
+        if row and row['last_fetch']:
+            try:
+                return datetime.fromisoformat(row['last_fetch'].replace('Z', '+00:00'))
+            except:
+                return None
+        return None
+
+
+    def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
+        """Check if we should fetch all recipes (based on last fetch time)"""
+        last_fetch = self.get_last_recipe_fetch_time()
+
+        if not last_fetch:
+            # Never fetched before
+            return True
+
+        hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
+        return hours_since > max_hours
