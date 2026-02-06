@@ -298,7 +298,6 @@ def get_trending():
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
-    user_id = request.args.get('user_id')
     force_refresh = request.args.get('refresh', 'false').lower() == 'true'
 
     # Get UTC offset
@@ -311,46 +310,15 @@ def get_trending():
         }), 400
 
     try:
-        # If user_id is provided, ensure we have their recipes
-        if user_id:
-            # Check if we need to refresh
-            should_refresh = force_refresh or db.should_refresh_user_recipes(user_id)
 
-            if should_refresh and is_primary_worker:
-                logger.info(f"🔄 Fetching recipes for user {user_id} (force: {force_refresh})")
-                recipes_fetched = asyncio.run(recipe_fetcher.fetch_and_store_user_recipes(user_id, force_refresh))
-                if recipes_fetched == 0 and force_refresh:
-                    # If force refresh returned 0, user might have no recipes
-                    return jsonify({
-                        'user_id': user_id,
-                        'message': 'User has no recipes or could not fetch them',
-                        'recipes_fetched': 0,
-                        'timeframe': timeframe,
-                        'trending_recipes': []
-                    })
-
-            elif should_refresh and not is_primary_worker:
-                # If we're not primary but need to refresh, suggest using primary
-                logger.warning(f"⚠️ User {user_id} needs refresh but this is not primary worker")
-                # We'll still proceed with potentially stale data
 
         # Calculate trending (this will filter by user_id if provided)
         trending_data = trending_calculator.calculate_trending(
             timeframe=timeframe,
             limit=limit,
-            utc_offset_seconds=utc_offset,
-            user_id=user_id
+            utc_offset_seconds=utc_offset
         )
 
-        # Add user info if user_id was provided
-        if user_id:
-            user_recipes = db.get_recipes_by_user(user_id)
-            trending_data['user_info'] = {
-                'user_id': user_id,
-                'total_recipes': len(user_recipes),
-                'needs_refresh': db.should_refresh_user_recipes(user_id),
-                'suggest_refresh': len(user_recipes) == 0
-            }
 
         return jsonify(trending_data)
 
@@ -401,27 +369,6 @@ def refresh_user_recipes(user_id: str):
         }), 500
 
 
-@app.route('/api/user/<user_id>/recipes', methods=['GET'])
-@require_whitelisted_ip
-def get_user_recipes_simple(user_id: str):
-    """Simple endpoint to get user's recipes"""
-    try:
-        recipes = db.get_recipes_by_user(user_id)
-
-        return jsonify({
-            'user_id': user_id,
-            'recipes': recipes,
-            'count': len(recipes),
-            'needs_refresh': db.should_refresh_user_recipes(user_id)
-        })
-
-    except Exception as e:
-        logger.error(f"✗ Error getting recipes for user {user_id}: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': str(e),
-            'user_id': user_id
-        }), 500
 # ============================================================================
 # STARTUP
 # ============================================================================

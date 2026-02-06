@@ -37,8 +37,7 @@ class TrendingCalculator:
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
-                           user_id: Optional[str] = None) -> Dict:
+    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -59,11 +58,11 @@ class TrendingCalculator:
 
         if timeframe_info['type'] == 'calendar':
             trending_recipes = self._calculate_calendar_trending(
-                timeframe, limit, utc_offset_seconds, user_id
+                timeframe, limit, utc_offset_seconds
             )
         else:
             trending_recipes = self._calculate_rolling_trending(
-                timeframe, timeframe_info['hours'], limit, utc_offset_seconds, user_id
+                timeframe, timeframe_info['hours'], limit, utc_offset_seconds
             )
 
         # Build comprehensive response
@@ -72,7 +71,6 @@ class TrendingCalculator:
             'type': timeframe_info['type'],
             'description': timeframe_info['description'],
             'utc_offset_seconds': utc_offset_seconds,
-            'user_id': user_id,
             'count': len(trending_recipes),
             'recipes': trending_recipes,
             'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
@@ -81,7 +79,7 @@ class TrendingCalculator:
         return response
 
     def _calculate_calendar_trending(self, timeframe: str, limit: int,
-                                     utc_offset_seconds: int, user_id: Optional[str] = None) -> List[Dict]:
+                                     utc_offset_seconds: int) -> List[Dict]:
         """Calculate trending based on calendar boundaries"""
         now_utc = datetime.utcnow()
 
@@ -90,15 +88,12 @@ class TrendingCalculator:
             local_midnight = self._get_local_midnight(utc_offset_seconds)
             cutoff = local_midnight
 
-            logger.info(f"📅 Calculating 'today' trending (since {local_midnight.isoformat()} UTC)" +
-                        (f" for user {user_id}" if user_id else ""))
-
+            logger.info(f"📅 Calculating 'today' trending (since {local_midnight.isoformat()} UTC)")
         elif timeframe == 'week':
             # Calculate start of week (Monday) in local time
             cutoff = self._get_week_start(utc_offset_seconds)
 
-            logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)" +
-                        (f" for user {user_id}" if user_id else ""))
+            logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)")
 
         else:
             raise ValueError(f"Unknown calendar timeframe: {timeframe}")
@@ -106,9 +101,6 @@ class TrendingCalculator:
         # Get recipes with delta since cutoff
         recipes = self.database.get_recipes_with_delta_since(cutoff)
 
-        # Filter by user if needed
-        if user_id:
-            recipes = [r for r in recipes if r.get('user_id') == user_id]
 
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
                                               cutoff_iso=cutoff.isoformat())
