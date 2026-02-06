@@ -4,7 +4,7 @@ Calculates trending recipes based on installs+forks deltas over different period
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
