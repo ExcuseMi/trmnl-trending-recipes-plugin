@@ -4,6 +4,7 @@ Calculates trending recipes based on installs+forks deltas over different period
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
@@ -23,13 +24,14 @@ class TrendingCalculator:
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, duration: str, limit: int = 10) -> List[Dict]:
+    def calculate_trending(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> List[Dict]:
         """
         Calculate trending recipes for a given duration
 
         Args:
             duration: One of '1d', '1w', '1m', '6m'
             limit: Maximum number of results to return
+            utc_offset_seconds: UTC offset in seconds for day boundaries (default: 0)
 
         Returns:
             List of recipes sorted by trending score (highest first)
@@ -39,10 +41,11 @@ class TrendingCalculator:
 
         days_ago = self.DURATIONS[duration]
 
-        logger.info(f"📈 Calculating trending recipes for {duration} ({days_ago} days)")
+        logger.info(f"📈 Calculating trending recipes for {duration} ({days_ago} days) with UTC offset: {utc_offset_seconds}s")
 
         # Get all recipes with their historical data for the requested duration
-        recipes = self.database.get_all_recipes_with_delta(days_ago)
+        # Pass utc_offset for proper day boundary calculations
+        recipes = self.database.get_all_recipes_with_delta(days_ago, utc_offset_seconds)
 
         # Calculate trending scores and gather all deltas
         trending_recipes = []
@@ -50,10 +53,14 @@ class TrendingCalculator:
             trending_score = self._calculate_trending_score(recipe, days_ago)
 
             if trending_score is not None:
-                # Calculate deltas for ALL durations
+                # Calculate deltas for ALL durations (with same UTC offset)
                 all_deltas = {}
                 for dur_key, dur_days in self.DURATIONS.items():
-                    delta_data = self._get_delta_for_duration(recipe['id'], dur_days)
+                    delta_data = self._get_delta_for_duration(
+                        recipe['id'],
+                        dur_days,
+                        utc_offset_seconds
+                    )
                     all_deltas[dur_key] = delta_data
 
                 trending_recipes.append({
@@ -83,7 +90,7 @@ class TrendingCalculator:
 
         return result
 
-    def _get_delta_for_duration(self, recipe_id: str, days_ago: int) -> Dict:
+    def _get_delta_for_duration(self, recipe_id: str, days_ago: int, utc_offset_seconds: int = 0) -> Dict:
         """Get delta information for a specific duration"""
         # Get current stats
         current = self.database.get_recipe_current(recipe_id)
@@ -95,8 +102,8 @@ class TrendingCalculator:
                 'past_snapshot_date': None
             }
 
-        # Get past stats
-        past = self.database.get_recipe_delta(recipe_id, days_ago)
+        # Get past stats with UTC offset consideration
+        past = self.database.get_recipe_delta_with_offset(recipe_id, days_ago, utc_offset_seconds)
 
         if past:
             return {
@@ -144,20 +151,20 @@ class TrendingCalculator:
 
         return 0
 
-    def get_trending_all_durations(self, limit: int = 10) -> Dict[str, List[Dict]]:
+    def get_trending_all_durations(self, limit: int = 10, utc_offset_seconds: int = 0) -> Dict[str, List[Dict]]:
         """Get trending recipes for all duration periods"""
         results = {}
 
         for duration in self.DURATIONS.keys():
             try:
-                results[duration] = self.calculate_trending(duration, limit)
+                results[duration] = self.calculate_trending(duration, limit, utc_offset_seconds)
             except Exception as e:
                 logger.error(f"✗ Error calculating trending for {duration}: {e}")
                 results[duration] = []
 
         return results
 
-    def get_recipe_momentum(self, recipe_id: str) -> Dict:
+    def get_recipe_momentum(self, recipe_id: str, utc_offset_seconds: int = 0) -> Dict:
         """
         Get momentum metrics for a specific recipe across all durations
 
@@ -169,7 +176,7 @@ class TrendingCalculator:
         for duration, days_ago in self.DURATIONS.items():
             try:
                 # Get recipe with delta
-                recipes = self.database.get_all_recipes_with_delta(days_ago)
+                recipes = self.database.get_all_recipes_with_delta(days_ago, utc_offset_seconds)
                 recipe = next((r for r in recipes if r['id'] == recipe_id), None)
 
                 if recipe:
@@ -189,3 +196,8 @@ class TrendingCalculator:
                 momentum[duration] = None
 
         return momentum
+
+    # Alias for backward compatibility
+    def calculate_trending_with_offset(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> List[Dict]:
+        """Alias for calculate_trending with UTC offset"""
+        return self.calculate_trending(duration, limit, utc_offset_seconds)

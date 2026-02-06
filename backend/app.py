@@ -139,14 +139,29 @@ def update_trmnl_ips_sync():
 
 
 def ip_refresh_worker():
-    """Background worker that refreshes TRMNL IPs periodically"""
+    """Background worker that refreshes TRMNL IPs exactly on the hour"""
     while True:
         try:
-            time.sleep(IP_REFRESH_HOURS * 3600)
+            # Calculate time until next hour
+            now = datetime.now()
+            minutes_to_next_hour = 60 - now.minute
+            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+
+            # Wait until next hour
+            logger.info(f"⏰ IP refresh: Waiting {minutes_to_next_hour} minutes until next hour")
+            time.sleep(seconds_to_next_hour)
+
+            # Refresh IPs
+            logger.info("🔄 Refreshing TRMNL IPs...")
             update_trmnl_ips_sync()
+
+            # Wait until next scheduled refresh time
+            logger.info(f"⏰ IP refresh: Next refresh in {IP_REFRESH_HOURS} hours")
+            time.sleep(IP_REFRESH_HOURS * 3600 - 1)  # Subtract 1 second to align with hour
+
         except Exception as e:
             logger.error(f"✗ IP refresh worker error: {e}")
-            time.sleep(3600)
+            time.sleep(3600)  # Retry in 1 hour on error
 
 
 def start_ip_refresh_worker():
@@ -160,7 +175,7 @@ def start_ip_refresh_worker():
         name='IP-Refresh-Worker'
     )
     worker_thread.start()
-    logger.info(f"✓ IP refresh worker started (every {IP_REFRESH_HOURS}h)")
+    logger.info(f"✓ IP refresh worker started (every {IP_REFRESH_HOURS}h, aligned to hour)")
 
 
 def get_allowed_ips():
@@ -208,16 +223,36 @@ def require_whitelisted_ip(f):
 # ============================================================================
 
 def recipe_fetch_worker():
-    """Background worker that fetches recipes periodically"""
+    """Background worker that fetches recipes exactly on the hour"""
     while True:
         try:
+            # Calculate time until next hour
+            now = datetime.now()
+            minutes_to_next_hour = 60 - now.minute
+            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+
+            # Wait until next hour
+            logger.info(f"⏰ Recipe fetch: Waiting {minutes_to_next_hour} minutes until next hour")
+            time.sleep(seconds_to_next_hour)
+
+            # Run the fetch
             logger.info("🔄 Starting recipe fetch job...")
             asyncio.run(recipe_fetcher.fetch_all_recipes())
-            logger.info(f"✓ Recipe fetch complete. Next fetch in {FETCH_INTERVAL_HOURS}h")
-            time.sleep(FETCH_INTERVAL_HOURS * 3600)
+
+            # Calculate next fetch time
+            logger.info(f"✓ Recipe fetch complete. Next fetch in {FETCH_INTERVAL_HOURS} hours")
+
+            # Wait until next scheduled fetch time (aligned to hour)
+            time.sleep(FETCH_INTERVAL_HOURS * 3600 - 1)  # Subtract 1 second to stay aligned
+
         except Exception as e:
             logger.error(f"✗ Recipe fetch worker error: {e}")
-            time.sleep(3600)  # Retry in 1 hour on error
+            # On error, wait until next hour before retrying
+            now = datetime.now()
+            minutes_to_next_hour = 60 - now.minute
+            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+            logger.info(f"⏰ Recipe fetch: Retrying in {minutes_to_next_hour} minutes")
+            time.sleep(seconds_to_next_hour)
 
 
 def start_recipe_fetch_worker():
@@ -228,7 +263,31 @@ def start_recipe_fetch_worker():
         name='Recipe-Fetch-Worker'
     )
     worker_thread.start()
-    logger.info(f"✓ Recipe fetch worker started (every {FETCH_INTERVAL_HOURS}h)")
+    logger.info(f"✓ Recipe fetch worker started (every {FETCH_INTERVAL_HOURS}h, aligned to hour)")
+
+
+# ============================================================================
+# TIME HELPER FUNCTIONS
+# ============================================================================
+
+def get_local_midnight(utc_offset_seconds: int = 0):
+    """
+    Get the local midnight time based on UTC offset.
+
+    Args:
+        utc_offset_seconds: Offset from UTC in seconds
+
+    Returns:
+        datetime object for the most recent midnight in local time (in UTC)
+    """
+    now = datetime.utcnow()
+    # Adjust to local time
+    local_now = now + timedelta(seconds=utc_offset_seconds)
+    # Get midnight in local time
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Convert back to UTC for consistency
+    utc_midnight = local_midnight - timedelta(seconds=utc_offset_seconds)
+    return utc_midnight
 
 
 # ============================================================================
@@ -238,11 +297,20 @@ def start_recipe_fetch_worker():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
+    # Get UTC offset from query parameter (default to 0)
+    try:
+        utc_offset = int(request.args.get('utc_offset', '0'))
+    except ValueError:
+        utc_offset = 0
+
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
+        'local_midnight': get_local_midnight(utc_offset).isoformat(),
+        'utc_offset_seconds': utc_offset,
         'ip_whitelist_enabled': ENABLE_IP_WHITELIST,
-        'last_ip_refresh': last_ip_refresh.isoformat() if last_ip_refresh else None
+        'last_ip_refresh': last_ip_refresh.isoformat() if last_ip_refresh else None,
+        'is_primary_worker': is_primary_worker
     })
 
 
@@ -256,9 +324,19 @@ def get_trending():
     Query parameters:
     - duration: 1d, 1w, 1m, 6m (default: 1w)
     - limit: number of results (default: 10)
+    - utc_offset: UTC offset in seconds (default: 0)
     """
     duration = request.args.get('duration', '1w')
     limit = int(request.args.get('limit', '10'))
+
+    # Get UTC offset
+    try:
+        utc_offset = int(request.args.get('utc_offset', '0'))
+    except ValueError:
+        return jsonify({
+            'error': 'Invalid UTC offset',
+            'message': 'UTC offset must be an integer number of seconds'
+        }), 400
 
     # Validate duration
     valid_durations = ['1d', '1w', '1m', '6m']
@@ -269,11 +347,19 @@ def get_trending():
         }), 400
 
     try:
-        trending = trending_calculator.calculate_trending(duration, limit)
+        # Pass UTC offset to trending calculator for proper day boundaries
+        trending = trending_calculator.calculate_trending_with_offset(
+            duration=duration,
+            limit=limit,
+            utc_offset_seconds=utc_offset
+        )
+
         return jsonify({
             'duration': duration,
             'count': len(trending),
-            'recipes': trending
+            'recipes': trending,
+            'utc_offset_seconds': utc_offset,
+            'local_midnight': get_local_midnight(utc_offset).isoformat()
         })
     except Exception as e:
         logger.error(f"✗ Error calculating trending: {e}")
@@ -309,7 +395,15 @@ def get_recipe(recipe_id):
 def get_stats():
     """Get overall statistics"""
     try:
+        # Get UTC offset from query parameter
+        try:
+            utc_offset = int(request.args.get('utc_offset', '0'))
+        except ValueError:
+            utc_offset = 0
+
         stats = db.get_statistics()
+        stats['utc_offset_seconds'] = utc_offset
+        stats['local_midnight'] = get_local_midnight(utc_offset).isoformat()
         return jsonify(stats)
     except Exception as e:
         logger.error(f"✗ Error fetching stats: {e}")
@@ -317,7 +411,6 @@ def get_stats():
             'error': 'Internal server error',
             'message': str(e)
         }), 500
-
 
 
 # ============================================================================
