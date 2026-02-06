@@ -5,7 +5,7 @@ Handles paged API calls and data persistence
 
 import asyncio
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional  # ADD THIS IMPORT
 from datetime import datetime
 
 import httpx
@@ -151,6 +151,7 @@ class RecipeFetcher:
         logger.info(f"✓ Recipe fetch complete for user {user_id}: {recipes_processed} recipes in {duration:.1f}s")
 
         return recipes_processed
+
     async def fetch_all_recipes(self) -> int:
         """
         Fetch all recipes from TRMNL API (all pages)
@@ -213,8 +214,7 @@ class RecipeFetcher:
                     # Show progress
                     if total_recipes:
                         progress = (recipes_processed / total_recipes) * 100
-                        logger.info(
-                            f"  ✓ Page {page}: processed {len(recipes)} recipes ({recipes_processed}/{total_recipes} = {progress:.1f}%)")
+                        logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes ({recipes_processed}/{total_recipes} = {progress:.1f}%)")
                     else:
                         logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes (total: {recipes_processed})")
 
@@ -237,6 +237,7 @@ class RecipeFetcher:
         logger.info(f"✓ Recipe fetch complete: {recipes_processed} recipes in {duration:.1f}s")
 
         return recipes_processed
+
     async def fetch_recipe_by_id(self, recipe_id: str) -> Dict:
         """Fetch a specific recipe by ID"""
         # Note: This assumes the API supports filtering by ID
