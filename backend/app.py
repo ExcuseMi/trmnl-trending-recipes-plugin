@@ -618,6 +618,7 @@ def get_trending_for_user(user_id: str):
             'error': 'Internal server error',
             'message': str(e)
         }), 500
+
 @app.route('/api/stats', methods=['GET'])
 @require_whitelisted_ip
 def get_stats():
