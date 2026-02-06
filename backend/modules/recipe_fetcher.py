@@ -35,7 +35,7 @@ class RecipeFetcher:
             logger.error(f"✗ Error fetching page {page}: {e}")
             raise
 
-    def parse_recipe(self, recipe_data: Dict) -> Dict:
+    def parse_recipe(self, recipe_data: Dict, user_id: Optional[str] = None) -> Dict:
         """Parse and normalize recipe data from API"""
         # Extract stats (installs and forks are in a 'stats' object)
         stats = recipe_data.get('stats', {})
@@ -48,7 +48,10 @@ class RecipeFetcher:
         if isinstance(author_bio, dict):
             description = author_bio.get('description', '')
 
-        return {
+        # Try to get user_id from various sources
+        recipe_user_id = user_id or recipe_data.get('user_id') or recipe_data.get('author_id')
+
+        result = {
             'id': str(recipe_data.get('id', '')),
             'name': recipe_data.get('name', 'Untitled'),
             'description': description,
@@ -61,6 +64,93 @@ class RecipeFetcher:
             'updated_at': recipe_data.get('published_at'),
         }
 
+        if recipe_user_id:
+            result['user_id'] = str(recipe_user_id)
+
+        return result
+
+    # Add a new method for user-specific fetching:
+    async def fetch_recipes_by_user(self, user_id: str) -> int:
+        """
+        Fetch all recipes for a specific user
+        Returns: number of recipes processed
+        """
+        start_time = datetime.now()
+        recipes_processed = 0
+        page = 1
+
+        logger.info(f"📥 Starting recipe fetch for user {user_id}...")
+
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
+                    logger.info(f"  → Fetching page {page} for user {user_id}...")
+
+                    # Call the user-specific endpoint
+                    response = await client.get(
+                        f"https://trmnl.com/recipes.json?user_id={user_id}&page={page}",
+                        timeout=self.timeout
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+
+                    # Recipes are in the 'data' field
+                    recipes = data.get('data', [])
+                    if not recipes:
+                        logger.info(f"  ✓ No more recipes on page {page}, stopping")
+                        break
+
+                    # Process recipes
+                    for recipe_data in recipes:
+                        try:
+                            recipe = self.parse_recipe(recipe_data, user_id)
+
+                            # Update current state
+                            self.database.upsert_recipe(recipe)
+
+                            # Save hourly snapshot
+                            self.database.save_hourly_snapshot(
+                                recipe['id'],
+                                recipe['installs'],
+                                recipe['forks']
+                            )
+
+                            # Save daily snapshot at midnight (if it's the first snapshot of the day)
+                            now_utc = datetime.utcnow()
+                            if now_utc.hour == 0 and now_utc.minute < 10:  # Only in first 10 minutes of midnight
+                                self.database.save_snapshot(
+                                    recipe['id'],
+                                    recipe['installs'],
+                                    recipe['forks']
+                                )
+
+                            recipes_processed += 1
+
+                        except Exception as e:
+                            logger.error(f"✗ Error processing recipe {recipe_data.get('id', 'unknown')}: {e}")
+                            continue
+
+                    logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes for user {user_id}")
+
+                    # Check if there are more pages using next_page_url
+                    next_page_url = data.get('next_page_url')
+                    if not next_page_url:
+                        logger.info(f"  ✓ Reached last page (no next_page_url)")
+                        break
+
+                    page += 1
+
+                    # Small delay between pages to be nice to the API
+                    await asyncio.sleep(2)
+
+                except Exception as e:
+                    logger.error(f"✗ Error on page {page} for user {user_id}: {e}")
+                    break
+
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"✓ Recipe fetch complete for user {user_id}: {recipes_processed} recipes in {duration:.1f}s")
+
+        return recipes_processed
     async def fetch_all_recipes(self) -> int:
         """
         Fetch all recipes from TRMNL API (all pages)
@@ -98,12 +188,21 @@ class RecipeFetcher:
                             # Update current state
                             self.database.upsert_recipe(recipe)
 
-                            # Save daily snapshot
-                            self.database.save_snapshot(
+                            # Save hourly snapshot
+                            self.database.save_hourly_snapshot(
                                 recipe['id'],
                                 recipe['installs'],
                                 recipe['forks']
                             )
+
+                            # Save daily snapshot at midnight (if it's the first snapshot of the day)
+                            now_utc = datetime.utcnow()
+                            if now_utc.hour == 0 and now_utc.minute < 10:  # Only in first 10 minutes of midnight
+                                self.database.save_snapshot(
+                                    recipe['id'],
+                                    recipe['installs'],
+                                    recipe['forks']
+                                )
 
                             recipes_processed += 1
 
@@ -114,7 +213,8 @@ class RecipeFetcher:
                     # Show progress
                     if total_recipes:
                         progress = (recipes_processed / total_recipes) * 100
-                        logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes ({recipes_processed}/{total_recipes} = {progress:.1f}%)")
+                        logger.info(
+                            f"  ✓ Page {page}: processed {len(recipes)} recipes ({recipes_processed}/{total_recipes} = {progress:.1f}%)")
                     else:
                         logger.info(f"  ✓ Page {page}: processed {len(recipes)} recipes (total: {recipes_processed})")
 
@@ -137,7 +237,6 @@ class RecipeFetcher:
         logger.info(f"✓ Recipe fetch complete: {recipes_processed} recipes in {duration:.1f}s")
 
         return recipes_processed
-
     async def fetch_recipe_by_id(self, recipe_id: str) -> Dict:
         """Fetch a specific recipe by ID"""
         # Note: This assumes the API supports filtering by ID

@@ -17,7 +17,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.schema_version = 2  # Current schema version
+        self.schema_version = 3  # Current schema version
 
     def get_connection(self) -> sqlite3.Connection:
         """Get or create database connection"""
@@ -93,6 +93,79 @@ class Database:
             logger.error(f"✗ Schema migration failed: {e}")
             raise
 
+    def _migrate_from_v2_to_v3(self):
+        """Migrate database from schema version 2 to 3 - add hourly snapshots and user support"""
+        logger.info("🔧 Migrating database schema from v2 to v3...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # 1. Add user_id to recipes table
+            cursor.execute("PRAGMA table_info(recipes)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'user_id' not in columns:
+                logger.info("  ✓ Adding user_id column to recipes table...")
+                cursor.execute("ALTER TABLE recipes ADD COLUMN user_id TEXT")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipes_user ON recipes(user_id)")
+                logger.info("  ✓ Created user_id column and index")
+
+            # 2. Create hourly snapshots table
+            logger.info("  ✓ Creating recipe_hourly_snapshots table...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS recipe_hourly_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recipe_id TEXT NOT NULL,
+                    installs INTEGER NOT NULL,
+                    forks INTEGER NOT NULL,
+                    popularity_score INTEGER NOT NULL,
+                    snapshot_hour TEXT NOT NULL,  -- Format: YYYY-MM-DDTHH:00:00Z
+                    snapshot_timestamp TEXT NOT NULL,
+                    FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+                    UNIQUE(recipe_id, snapshot_hour)
+                )
+            """)
+
+            # Create indices for hourly snapshots
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_hourly_snapshots_hour 
+                ON recipe_hourly_snapshots(snapshot_hour)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_hourly_snapshots_recipe 
+                ON recipe_hourly_snapshots(recipe_id, snapshot_hour)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_hourly_snapshots_timestamp 
+                ON recipe_hourly_snapshots(snapshot_timestamp)
+            """)
+
+            # 3. Migrate existing daily snapshots to also have hourly resolution
+            # (they'll get timestamped at hour 0)
+            cursor.execute("""
+                INSERT INTO recipe_hourly_snapshots 
+                (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp)
+                SELECT 
+                    recipe_id, 
+                    installs, 
+                    forks, 
+                    popularity_score, 
+                    snapshot_date || 'T00:00:00Z' as snapshot_hour,
+                    snapshot_timestamp
+                FROM recipe_history
+                ON CONFLICT(recipe_id, snapshot_hour) DO NOTHING
+            """)
+            logger.info(f"  ✓ Migrated {cursor.rowcount} daily snapshots to hourly format")
+
+            conn.commit()
+            logger.info("✓ Schema migration to v3 completed")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
     def initialize(self):
         """Initialize database schema with migrations"""
         logger.info(f"📊 Initializing database: {self.db_path}")
@@ -170,7 +243,9 @@ class Database:
                 ON recipe_history(snapshot_timestamp)
             """)
             self._set_schema_version(2)
-
+        if current_version < 3:
+            self._migrate_from_v2_to_v3()
+            self._set_schema_version(3)
         logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
@@ -631,3 +706,246 @@ class Database:
         }
 
         return result
+
+    def save_hourly_snapshot(self, recipe_id: str, installs: int, forks: int):
+        """Save an hourly snapshot of recipe stats"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Use UTC for all timestamps
+        now_utc = datetime.utcnow()
+        snapshot_hour = now_utc.replace(minute=0, second=0, microsecond=0).isoformat() + 'Z'  # Hour precision
+        snapshot_timestamp = now_utc.isoformat() + 'Z'  # Full precision
+        popularity_score = installs + forks
+
+        cursor.execute("""
+            INSERT INTO recipe_hourly_snapshots (
+                recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(recipe_id, snapshot_hour) DO UPDATE SET
+                installs = excluded.installs,
+                forks = excluded.forks,
+                popularity_score = excluded.popularity_score,
+                snapshot_timestamp = excluded.snapshot_timestamp
+        """, (recipe_id, installs, forks, popularity_score, snapshot_hour, snapshot_timestamp))
+
+        conn.commit()
+        logger.debug(f"💾 Saved hourly snapshot for recipe {recipe_id} at {snapshot_hour}")
+
+    def cleanup_hourly_snapshots(self, hours_to_keep: int = 24 * 30):  # Keep 30 days by default
+        """Remove old hourly snapshots beyond retention period"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff = datetime.utcnow() - timedelta(hours=hours_to_keep)
+        cutoff_iso = cutoff.isoformat() + 'Z'
+
+        cursor.execute("""
+            DELETE FROM recipe_hourly_snapshots
+            WHERE snapshot_timestamp < ?
+        """, (cutoff_iso,))
+
+        deleted = cursor.rowcount
+        conn.commit()
+
+        if deleted > 0:
+            logger.info(f"🗑️  Cleaned up {deleted} old hourly snapshots (older than {cutoff_iso})")
+
+        return deleted
+
+    def cleanup_old_daily_snapshots(self, days_to_keep: int = 180):
+        """Remove old daily snapshots beyond retention period"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff = datetime.utcnow() - timedelta(days=days_to_keep)
+        cutoff_date = cutoff.date().isoformat()
+
+        cursor.execute("""
+            DELETE FROM recipe_history
+            WHERE snapshot_date < ?
+        """, (cutoff_date,))
+
+        deleted = cursor.rowcount
+        conn.commit()
+
+        if deleted > 0:
+            logger.info(f"🗑️  Cleaned up {deleted} old daily snapshots (older than {cutoff_date})")
+
+        return deleted
+
+    def get_recipe_delta_since_hours(self, recipe_id: str, hours_ago: int) -> Optional[Dict]:
+        """
+        Get stats for a recipe since N hours ago using hourly snapshots
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
+        cutoff_iso = cutoff.isoformat() + 'Z'
+
+        # Get current stats
+        cursor.execute("""
+            SELECT 
+                installs as current_installs,
+                forks as current_forks,
+                popularity_score as current_popularity
+            FROM recipes
+            WHERE id = ?
+        """, (recipe_id,))
+
+        current_row = cursor.fetchone()
+        if not current_row:
+            return None
+
+        current = dict(current_row)
+
+        # Get hourly snapshot before cutoff
+        cursor.execute("""
+            SELECT 
+                installs as past_installs,
+                forks as past_forks,
+                popularity_score as past_popularity,
+                snapshot_timestamp as past_snapshot_timestamp
+            FROM recipe_hourly_snapshots
+            WHERE recipe_id = ?
+            AND snapshot_timestamp <= ?
+            ORDER BY snapshot_timestamp DESC
+            LIMIT 1
+        """, (recipe_id, cutoff_iso))
+
+        past_row = cursor.fetchone()
+
+        if past_row:
+            past = dict(past_row)
+            has_data = True
+        else:
+            # Try to get from daily snapshots as fallback
+            cursor.execute("""
+                SELECT 
+                    installs as past_installs,
+                    forks as past_forks,
+                    popularity_score as past_popularity,
+                    snapshot_timestamp as past_snapshot_timestamp
+                FROM recipe_history
+                WHERE recipe_id = ?
+                AND snapshot_timestamp <= ?
+                ORDER BY snapshot_timestamp DESC
+                LIMIT 1
+            """, (recipe_id, cutoff_iso))
+
+            past_row = cursor.fetchone()
+            if past_row:
+                past = dict(past_row)
+                has_data = True
+            else:
+                past = {
+                    'past_installs': 0,
+                    'past_forks': 0,
+                    'past_popularity': 0,
+                    'past_snapshot_timestamp': None
+                }
+                has_data = False
+
+        # Calculate deltas
+        result = {
+            'recipe_id': recipe_id,
+            'current_installs': current['current_installs'],
+            'current_forks': current['current_forks'],
+            'current_popularity': current['current_popularity'],
+            'past_installs': past['past_installs'],
+            'past_forks': past['past_forks'],
+            'past_popularity': past['past_popularity'],
+            'past_snapshot_timestamp': past['past_snapshot_timestamp'],
+            'has_data': has_data,
+            'delta_installs': current['current_installs'] - past['past_installs'],
+            'delta_forks': current['current_forks'] - past['past_forks'],
+            'delta_popularity': current['current_popularity'] - past['past_popularity']
+        }
+
+        return result
+
+    def get_recipes_by_user(self, user_id: str) -> List[Dict]:
+        """Get all recipes for a specific user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM recipes 
+            WHERE user_id = ?
+            ORDER BY popularity_score DESC
+        """, (user_id,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_recipes_with_delta_since_hours(self, hours_ago: int, user_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get all recipes with their stats since N hours ago using hourly snapshots
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
+        cutoff_iso = cutoff.isoformat() + 'Z'
+
+        # Build query with optional user filter
+        query = """
+            SELECT 
+                r.id,
+                r.name,
+                r.description,
+                r.installs as current_installs,
+                r.forks as current_forks,
+                r.popularity_score as current_popularity,
+                r.url,
+                r.icon_url,
+                r.thumbnail_url,
+                r.user_id,
+                COALESCE(h.installs, 0) as past_installs,
+                COALESCE(h.forks, 0) as past_forks,
+                COALESCE(h.popularity_score, 0) as past_popularity,
+                h.snapshot_timestamp as past_snapshot_timestamp,
+                CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
+            FROM recipes r
+            LEFT JOIN (
+                -- Get the most recent hourly snapshot BEFORE cutoff for each recipe
+                SELECT DISTINCT
+                    recipe_id,
+                    installs,
+                    forks,
+                    popularity_score,
+                    snapshot_timestamp,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY recipe_id 
+                        ORDER BY snapshot_timestamp DESC
+                    ) as rn
+                FROM recipe_hourly_snapshots
+                WHERE snapshot_timestamp <= ?
+            ) h ON r.id = h.recipe_id AND h.rn = 1
+        """
+
+        params = [cutoff_iso]
+
+        if user_id:
+            query += " WHERE r.user_id = ?"
+            params.append(user_id)
+
+        query += " ORDER BY r.popularity_score DESC"
+
+        cursor.execute(query, params)
+
+        results = []
+        for row in cursor.fetchall():
+            row_dict = dict(row)
+            # Ensure all numeric fields are integers
+            row_dict['current_installs'] = int(row_dict['current_installs'] or 0)
+            row_dict['current_forks'] = int(row_dict['current_forks'] or 0)
+            row_dict['current_popularity'] = int(row_dict['current_popularity'] or 0)
+            row_dict['past_installs'] = int(row_dict['past_installs'] or 0)
+            row_dict['past_forks'] = int(row_dict['past_forks'] or 0)
+            row_dict['past_popularity'] = int(row_dict['past_popularity'] or 0)
+            row_dict['has_history'] = bool(row_dict['has_history'])
+            results.append(row_dict)
+
+        return results

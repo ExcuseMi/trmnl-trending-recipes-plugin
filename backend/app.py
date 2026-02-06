@@ -223,7 +223,7 @@ def require_whitelisted_ip(f):
 # ============================================================================
 
 def recipe_fetch_worker():
-    """Background worker that fetches recipes exactly on the hour"""
+    """Background worker that fetches recipes and saves hourly snapshots"""
     fetch_count = 0
 
     while True:
@@ -573,6 +573,51 @@ def redirect_trending(timeframe: str):
     with app.test_request_context(f'/trending?{query_string}'):
         return get_trending()
 
+
+@app.route('/trending/user/<user_id>', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_for_user(user_id: str):
+    """
+    Get trending recipes for a specific user
+
+    Query parameters:
+    - timeframe: 1h, today, week, 24h, 7d, 30d, 180d (default: 24h)
+    - limit: number of results (default: 10)
+    - utc_offset: UTC offset in seconds (default: 0)
+    """
+    timeframe = request.args.get('timeframe', '24h')
+    limit = int(request.args.get('limit', '10'))
+
+    try:
+        utc_offset = int(request.args.get('utc_offset', '0'))
+    except ValueError:
+        return jsonify({
+            'error': 'Invalid UTC offset',
+            'message': 'UTC offset must be an integer number of seconds'
+        }), 400
+
+    try:
+        trending_data = trending_calculator.calculate_trending(
+            timeframe=timeframe,
+            limit=limit,
+            utc_offset_seconds=utc_offset,
+            user_id=user_id
+        )
+
+        return jsonify(trending_data)
+
+    except ValueError as e:
+        return jsonify({
+            'error': 'Invalid timeframe',
+            'message': str(e),
+            'valid_timeframes': list(trending_calculator.TIMEFRAMES.keys())
+        }), 400
+    except Exception as e:
+        logger.error(f"✗ Error calculating trending for user {user_id}: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
 @app.route('/api/stats', methods=['GET'])
 @require_whitelisted_ip
 def get_stats():
@@ -627,8 +672,61 @@ def initialize():
     # Start background workers (only primary worker)
     if is_primary_worker:
         start_recipe_fetch_worker()
+        start_snapshot_cleanup_worker()
 
     logger.info("✓ Application initialized successfully")
+
+def snapshot_cleanup_worker():
+    """Background worker that cleans up old snapshots"""
+    cleanup_count = 0
+
+    while True:
+        try:
+            # Calculate time until next hour
+            now = datetime.now()
+            minutes_to_next_hour = 60 - now.minute
+            seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
+
+            # Wait until next hour
+            logger.info(
+                f"⏰ Snapshot cleanup #{cleanup_count + 1}: Waiting {minutes_to_next_hour} minutes until next hour")
+            time.sleep(seconds_to_next_hour)
+
+            # Run cleanup
+            logger.info(f"🗑️  Starting snapshot cleanup #{cleanup_count + 1}...")
+            start_time = time.time()
+
+            # Clean up hourly snapshots older than 30 days
+            hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=24 * 30)
+
+            # Clean up daily snapshots older than 180 days
+            daily_deleted = db.cleanup_old_daily_snapshots(days_to_keep=180)
+
+            cleanup_count += 1
+            duration = time.time() - start_time
+
+            logger.info(
+                f"✓ Cleanup #{cleanup_count} complete: {hourly_deleted} hourly, {daily_deleted} daily snapshots in {duration:.1f}s")
+            logger.info(f"⏰ Next cleanup in 24 hours")
+
+            # Wait until next day for cleanup
+            time.sleep(23 * 3600)  # Wait 23 hours
+
+        except Exception as e:
+            logger.error(f"✗ Snapshot cleanup error: {e}")
+            # Wait 1 hour before retrying on error
+            time.sleep(3600)
+
+
+def start_snapshot_cleanup_worker():
+    """Start background thread for snapshot cleanup"""
+    worker_thread = threading.Thread(
+        target=snapshot_cleanup_worker,
+        daemon=True,
+        name='Snapshot-Cleanup-Worker'
+    )
+    worker_thread.start()
+    logger.info("✓ Snapshot cleanup worker started (runs daily at 00:00)")
 
 
 # Initialize on module load (for gunicorn)

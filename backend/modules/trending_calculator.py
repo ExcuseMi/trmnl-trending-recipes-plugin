@@ -19,6 +19,9 @@ class TrendingCalculator:
         'today': {'type': 'calendar', 'hours': None, 'description': 'Since local midnight today'},
         'week': {'type': 'calendar', 'hours': None, 'description': 'Since start of week (Monday)'},
 
+        # New 1h timeframe
+        '1h': {'type': 'rolling', 'hours': 1, 'description': 'Last hour'},
+
         # Rolling windows
         '24h': {'type': 'rolling', 'hours': 24, 'description': 'Last 24 hours'},
         '7d': {'type': 'rolling', 'hours': 168, 'description': 'Last 7 days'},
@@ -31,19 +34,20 @@ class TrendingCalculator:
         '1m': {'type': 'rolling', 'hours': 720, 'description': 'Last 30 days (alias for 30d)'},
         '6m': {'type': 'rolling', 'hours': 4320, 'description': 'Last 180 days (alias for 180d)'},
     }
-
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
+    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
+                           user_id: Optional[str] = None) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
         Args:
-            timeframe: One of 'today', 'week', '24h', '7d', '30d', '180d'
+            timeframe: One of '1h', 'today', 'week', '24h', '7d', '30d', '180d'
                       or legacy '1d', '1w', '1m', '6m'
             limit: Maximum number of results to return
             utc_offset_seconds: UTC offset in seconds for calendar calculations
+            user_id: Optional user ID to filter recipes by user
 
         Returns:
             Dict with timeframe info and trending recipes
@@ -55,11 +59,11 @@ class TrendingCalculator:
 
         if timeframe_info['type'] == 'calendar':
             trending_recipes = self._calculate_calendar_trending(
-                timeframe, limit, utc_offset_seconds
+                timeframe, limit, utc_offset_seconds, user_id
             )
         else:
             trending_recipes = self._calculate_rolling_trending(
-                timeframe, timeframe_info['hours'], limit, utc_offset_seconds
+                timeframe, timeframe_info['hours'], limit, utc_offset_seconds, user_id
             )
 
         # Build comprehensive response
@@ -68,6 +72,7 @@ class TrendingCalculator:
             'type': timeframe_info['type'],
             'description': timeframe_info['description'],
             'utc_offset_seconds': utc_offset_seconds,
+            'user_id': user_id,
             'count': len(trending_recipes),
             'recipes': trending_recipes,
             'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
@@ -75,7 +80,8 @@ class TrendingCalculator:
 
         return response
 
-    def _calculate_calendar_trending(self, timeframe: str, limit: int, utc_offset_seconds: int) -> List[Dict]:
+    def _calculate_calendar_trending(self, timeframe: str, limit: int,
+                                     utc_offset_seconds: int, user_id: Optional[str] = None) -> List[Dict]:
         """Calculate trending based on calendar boundaries"""
         now_utc = datetime.utcnow()
 
@@ -83,16 +89,16 @@ class TrendingCalculator:
             # Calculate local midnight
             local_midnight = self._get_local_midnight(utc_offset_seconds)
             cutoff = local_midnight
-            days_ago = None  # Not using days_ago for calendar calculations
 
-            logger.info(f"📅 Calculating 'today' trending (since {local_midnight.isoformat()} UTC)")
+            logger.info(f"📅 Calculating 'today' trending (since {local_midnight.isoformat()} UTC)" +
+                        (f" for user {user_id}" if user_id else ""))
 
         elif timeframe == 'week':
             # Calculate start of week (Monday) in local time
             cutoff = self._get_week_start(utc_offset_seconds)
-            days_ago = None
 
-            logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)")
+            logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)" +
+                        (f" for user {user_id}" if user_id else ""))
 
         else:
             raise ValueError(f"Unknown calendar timeframe: {timeframe}")
@@ -100,20 +106,23 @@ class TrendingCalculator:
         # Get recipes with delta since cutoff
         recipes = self.database.get_recipes_with_delta_since(cutoff)
 
-        return self._process_trending_recipes(recipes, timeframe, limit, cutoff_iso=cutoff.isoformat())
+        # Filter by user if needed
+        if user_id:
+            recipes = [r for r in recipes if r.get('user_id') == user_id]
 
-    def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int, utc_offset_seconds: int) -> List[Dict]:
+        return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
+                                              cutoff_iso=cutoff.isoformat())
+
+    def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int,
+                                    utc_offset_seconds: int, user_id: Optional[str] = None) -> List[Dict]:
         """Calculate trending based on rolling time window"""
-        logger.info(f"⏰ Calculating '{timeframe}' trending ({hours}h rolling window)")
+        logger.info(f"⏰ Calculating '{timeframe}' trending ({hours}h rolling window)" +
+                    (f" for user {user_id}" if user_id else ""))
 
-        # Calculate cutoff time (rolling window)
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
-        cutoff_iso = cutoff.isoformat()
+        # Get recipes with delta since cutoff using hourly snapshots
+        recipes = self.database.get_recipes_with_delta_since_hours(hours, user_id)
 
-        # Get recipes with delta since cutoff
-        recipes = self.database.get_recipes_with_delta_since(cutoff)
-
-        return self._process_trending_recipes(recipes, timeframe, limit, cutoff_iso=cutoff_iso)
+        return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds)
 
     def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: int,
                                   utc_offset_seconds: int = 0, cutoff_iso: str = None) -> List[Dict]:
