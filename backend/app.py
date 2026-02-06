@@ -442,6 +442,48 @@ def get_recipe(recipe_id):
         }), 500
 
 
+@app.route('/debug/snapshots-overview', methods=['GET'])
+def debug_snapshots_overview():
+    """Check snapshot coverage"""
+    conn = db.get_connection()
+    cursor = conn.cursor()
+
+    # Get all snapshot dates
+    cursor.execute("""
+        SELECT 
+            snapshot_date,
+            COUNT(*) as recipe_count,
+            MIN(snapshot_timestamp) as earliest,
+            MAX(snapshot_timestamp) as latest
+        FROM recipe_history
+        GROUP BY snapshot_date
+        ORDER BY snapshot_date DESC
+    """)
+
+    dates = [dict(row) for row in cursor.fetchall()]
+
+    # Get total recipe count
+    cursor.execute("SELECT COUNT(*) as count FROM recipes")
+    total_recipes = cursor.fetchone()['count']
+
+    # Check which dates have coverage
+    coverage = {}
+    for date_info in dates:
+        date = date_info['snapshot_date']
+        coverage_pct = (date_info['recipe_count'] / total_recipes * 100) if total_recipes > 0 else 0
+        coverage[date] = {
+            'recipe_count': date_info['recipe_count'],
+            'coverage_pct': round(coverage_pct, 1),
+            'earliest': date_info['earliest'],
+            'latest': date_info['latest']
+        }
+
+    return jsonify({
+        'total_recipes': total_recipes,
+        'snapshot_dates': dates,
+        'coverage': coverage,
+        'diagnosis': 'Missing yesterday snapshots' if len(dates) < 2 else 'Has multiple days'
+    })
 @app.route('/debug/recipe/<recipe_id>/history', methods=['GET'])
 def debug_recipe_history(recipe_id):
     """Debug why a recipe has no historical data"""
