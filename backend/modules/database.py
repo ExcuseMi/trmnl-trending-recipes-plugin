@@ -502,3 +502,75 @@ class Database:
         if self.conn:
             self.conn.close()
             self.conn = None
+
+    def get_recipes_with_delta_since(self, cutoff: datetime) -> List[Dict]:
+        """
+        Get all recipes with their stats since a specific cutoff time
+
+        Args:
+            cutoff: UTC datetime to look back from
+
+        Returns:
+            List of recipes with current and past stats
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff_iso = cutoff.isoformat()
+
+        cursor.execute("""
+            SELECT 
+                r.id,
+                r.name,
+                r.description,
+                r.installs as current_installs,
+                r.forks as current_forks,
+                r.popularity_score as current_popularity,
+                r.url,
+                r.icon_url,
+                r.thumbnail_url,
+                h.installs as past_installs,
+                h.forks as past_forks,
+                h.popularity_score as past_popularity,
+                h.snapshot_timestamp as past_snapshot_timestamp
+            FROM recipes r
+            LEFT JOIN (
+                -- Get the most recent snapshot BEFORE cutoff for each recipe
+                SELECT DISTINCT
+                    recipe_id,
+                    installs,
+                    forks,
+                    popularity_score,
+                    snapshot_timestamp,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY recipe_id 
+                        ORDER BY snapshot_timestamp DESC
+                    ) as rn
+                FROM recipe_history
+                WHERE snapshot_timestamp <= ?
+            ) h ON r.id = h.recipe_id AND h.rn = 1
+            WHERE h.snapshot_timestamp IS NOT NULL  -- Only include recipes with history before cutoff
+        """, (cutoff_iso,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_recipe_delta_since(self, recipe_id: str, cutoff: datetime) -> Optional[Dict]:
+        """
+        Get stats for a recipe since a specific cutoff time
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cutoff_iso = cutoff.isoformat()
+
+        cursor.execute("""
+            SELECT installs, forks, popularity_score, snapshot_timestamp
+            FROM recipe_history
+            WHERE recipe_id = ?
+            AND snapshot_timestamp <= ?
+            ORDER BY snapshot_timestamp DESC
+            LIMIT 1
+        """, (recipe_id, cutoff_iso))
+
+        row = cursor.fetchone()
+        return dict(row) if row else None

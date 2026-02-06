@@ -314,19 +314,22 @@ def health():
     })
 
 
+# Replace the existing /trending endpoint with:
+
 @app.route('/trending', methods=['GET'])
 @app.route('/trending/', methods=['GET'])
 @require_whitelisted_ip
 def get_trending():
     """
-    Get trending recipes
+    Get trending recipes with clear timeframe options
 
     Query parameters:
-    - duration: 1d, 1w, 1m, 6m (default: 1w)
+    - timeframe: today, week, 24h, 7d, 30d, 180d (default: 24h)
+                 or legacy: 1d, 1w, 1m, 6m
     - limit: number of results (default: 10)
-    - utc_offset: UTC offset in seconds (default: 0)
+    - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
     """
-    duration = request.args.get('duration', '1w')
+    timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
 
     # Get UTC offset
@@ -338,29 +341,21 @@ def get_trending():
             'message': 'UTC offset must be an integer number of seconds'
         }), 400
 
-    # Validate duration
-    valid_durations = ['1d', '1w', '1m', '6m']
-    if duration not in valid_durations:
-        return jsonify({
-            'error': 'Invalid duration',
-            'message': f'Duration must be one of: {", ".join(valid_durations)}'
-        }), 400
-
     try:
-        # Pass UTC offset to trending calculator for proper day boundaries
-        trending = trending_calculator.calculate_trending_with_offset(
-            duration=duration,
+        trending_data = trending_calculator.calculate_trending(
+            timeframe=timeframe,
             limit=limit,
             utc_offset_seconds=utc_offset
         )
 
+        return jsonify(trending_data)
+
+    except ValueError as e:
         return jsonify({
-            'duration': duration,
-            'count': len(trending),
-            'recipes': trending,
-            'utc_offset_seconds': utc_offset,
-            'local_midnight': get_local_midnight(utc_offset).isoformat()
-        })
+            'error': 'Invalid timeframe',
+            'message': str(e),
+            'valid_timeframes': list(trending_calculator.TIMEFRAMES.keys())
+        }), 400
     except Exception as e:
         logger.error(f"✗ Error calculating trending: {e}")
         return jsonify({
@@ -368,6 +363,63 @@ def get_trending():
             'message': str(e)
         }), 500
 
+
+@app.route('/trending/all', methods=['GET'])
+@require_whitelisted_ip
+def get_all_trending():
+    """
+    Get trending recipes for all timeframes at once
+    """
+    try:
+        utc_offset = int(request.args.get('utc_offset', '0'))
+    except ValueError:
+        return jsonify({
+            'error': 'Invalid UTC offset',
+            'message': 'UTC offset must be an integer number of seconds'
+        }), 400
+
+    limit = int(request.args.get('limit', '10'))
+
+    try:
+        all_trending = trending_calculator.get_all_timeframes_trending(
+            limit=limit,
+            utc_offset_seconds=utc_offset
+        )
+
+        return jsonify({
+            'timeframes': all_trending,
+            'utc_offset_seconds': utc_offset,
+            'current_time': datetime.utcnow().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"✗ Error calculating all trending: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/trending/timeframes', methods=['GET'])
+def get_timeframes():
+    """
+    Get information about available trending timeframes
+    """
+    timeframes_info = {}
+
+    for timeframe, info in trending_calculator.TIMEFRAMES.items():
+        timeframes_info[timeframe] = {
+            'type': info['type'],
+            'description': info['description'],
+            'hours': info.get('hours'),
+            'example_url': f"/trending?timeframe={timeframe}&utc_offset=3600"
+        }
+
+    return jsonify({
+        'available_timeframes': timeframes_info,
+        'recommended_for_new_users': ['24h', '7d', '30d'],
+        'note': 'Calendar timeframes (today, week) require sufficient historical data'
+    })
 
 @app.route('/api/recipe/<recipe_id>', methods=['GET'])
 @require_whitelisted_ip
@@ -389,6 +441,53 @@ def get_recipe(recipe_id):
             'message': str(e)
         }), 500
 
+
+@app.route('/trending/today', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_today():
+    """Get trending since local midnight today"""
+    return redirect_trending('today')
+
+
+@app.route('/trending/24h', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_24h():
+    """Get trending for last 24 hours (rolling)"""
+    return redirect_trending('24h')
+
+
+@app.route('/trending/week', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_week():
+    """Get trending since start of week (Monday)"""
+    return redirect_trending('week')
+
+
+@app.route('/trending/7d', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_7d():
+    """Get trending for last 7 days (rolling)"""
+    return redirect_trending('7d')
+
+
+@app.route('/trending/30d', methods=['GET'])
+@require_whitelisted_ip
+def get_trending_30d():
+    """Get trending for last 30 days (rolling)"""
+    return redirect_trending('30d')
+
+
+def redirect_trending(timeframe: str):
+    """Helper to redirect specific timeframe endpoints to main trending"""
+    args = request.args.copy()
+    args['timeframe'] = timeframe
+
+    # Build query string
+    query_string = '&'.join([f"{k}={v}" for k, v in args.items()])
+
+    # Use internal redirect to avoid external redirect
+    with app.test_request_context(f'/trending?{query_string}'):
+        return get_trending()
 
 @app.route('/api/stats', methods=['GET'])
 @require_whitelisted_ip

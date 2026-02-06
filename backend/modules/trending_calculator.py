@@ -13,55 +13,132 @@ logger = logging.getLogger(__name__)
 class TrendingCalculator:
     """Calculate trending recipes based on popularity growth"""
 
-    # Duration mapping: duration code -> days ago
-    DURATIONS = {
-        '1d': 1,
-        '1w': 7,
-        '1m': 30,
-        '6m': 180
+    # Timeframe mapping
+    TIMEFRAMES = {
+        # Calendar boundaries (since midnight/Monday)
+        'today': {'type': 'calendar', 'hours': None, 'description': 'Since local midnight today'},
+        'week': {'type': 'calendar', 'hours': None, 'description': 'Since start of week (Monday)'},
+
+        # Rolling windows
+        '24h': {'type': 'rolling', 'hours': 24, 'description': 'Last 24 hours'},
+        '7d': {'type': 'rolling', 'hours': 168, 'description': 'Last 7 days'},
+        '30d': {'type': 'rolling', 'hours': 720, 'description': 'Last 30 days'},
+        '180d': {'type': 'rolling', 'hours': 4320, 'description': 'Last 180 days'},
+
+        # Aliases for backward compatibility
+        '1d': {'type': 'rolling', 'hours': 24, 'description': 'Last 24 hours (alias for 24h)'},
+        '1w': {'type': 'rolling', 'hours': 168, 'description': 'Last 7 days (alias for 7d)'},
+        '1m': {'type': 'rolling', 'hours': 720, 'description': 'Last 30 days (alias for 30d)'},
+        '6m': {'type': 'rolling', 'hours': 4320, 'description': 'Last 180 days (alias for 180d)'},
     }
 
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> List[Dict]:
+    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
         """
-        Calculate trending recipes for a given duration
+        Calculate trending recipes for a given timeframe
 
         Args:
-            duration: One of '1d', '1w', '1m', '6m'
+            timeframe: One of 'today', 'week', '24h', '7d', '30d', '180d'
+                      or legacy '1d', '1w', '1m', '6m'
             limit: Maximum number of results to return
-            utc_offset_seconds: UTC offset in seconds for day boundaries (default: 0)
+            utc_offset_seconds: UTC offset in seconds for calendar calculations
 
         Returns:
-            List of recipes sorted by trending score (highest first)
+            Dict with timeframe info and trending recipes
         """
-        if duration not in self.DURATIONS:
-            raise ValueError(f"Invalid duration: {duration}. Must be one of: {list(self.DURATIONS.keys())}")
+        if timeframe not in self.TIMEFRAMES:
+            raise ValueError(f"Invalid timeframe: {timeframe}. Must be one of: {list(self.TIMEFRAMES.keys())}")
 
-        days_ago = self.DURATIONS[duration]
+        timeframe_info = self.TIMEFRAMES[timeframe]
 
-        logger.info(f"📈 Calculating trending recipes for {duration} ({days_ago} days) with UTC offset: {utc_offset_seconds}s")
+        if timeframe_info['type'] == 'calendar':
+            trending_recipes = self._calculate_calendar_trending(
+                timeframe, limit, utc_offset_seconds
+            )
+        else:
+            trending_recipes = self._calculate_rolling_trending(
+                timeframe, timeframe_info['hours'], limit, utc_offset_seconds
+            )
 
-        # Get all recipes with their historical data for the requested duration
-        # Pass utc_offset for proper day boundary calculations
-        recipes = self.database.get_all_recipes_with_delta(days_ago, utc_offset_seconds)
+        # Build comprehensive response
+        response = {
+            'timeframe': timeframe,
+            'type': timeframe_info['type'],
+            'description': timeframe_info['description'],
+            'utc_offset_seconds': utc_offset_seconds,
+            'count': len(trending_recipes),
+            'recipes': trending_recipes,
+            'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
+        }
 
-        # Calculate trending scores and gather all deltas
+        return response
+
+    def _calculate_calendar_trending(self, timeframe: str, limit: int, utc_offset_seconds: int) -> List[Dict]:
+        """Calculate trending based on calendar boundaries"""
+        now_utc = datetime.utcnow()
+
+        if timeframe == 'today':
+            # Calculate local midnight
+            local_midnight = self._get_local_midnight(utc_offset_seconds)
+            cutoff = local_midnight
+            days_ago = None  # Not using days_ago for calendar calculations
+
+            logger.info(f"📅 Calculating 'today' trending (since {local_midnight.isoformat()} UTC)")
+
+        elif timeframe == 'week':
+            # Calculate start of week (Monday) in local time
+            cutoff = self._get_week_start(utc_offset_seconds)
+            days_ago = None
+
+            logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)")
+
+        else:
+            raise ValueError(f"Unknown calendar timeframe: {timeframe}")
+
+        # Get recipes with delta since cutoff
+        recipes = self.database.get_recipes_with_delta_since(cutoff)
+
+        return self._process_trending_recipes(recipes, timeframe, limit, cutoff_iso=cutoff.isoformat())
+
+    def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int, utc_offset_seconds: int) -> List[Dict]:
+        """Calculate trending based on rolling time window"""
+        logger.info(f"⏰ Calculating '{timeframe}' trending ({hours}h rolling window)")
+
+        # Calculate cutoff time (rolling window)
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_iso = cutoff.isoformat()
+
+        # Get recipes with delta since cutoff
+        recipes = self.database.get_recipes_with_delta_since(cutoff)
+
+        return self._process_trending_recipes(recipes, timeframe, limit, cutoff_iso=cutoff_iso)
+
+    def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: int, cutoff_iso: str = None) -> List[Dict]:
+        """Process recipes into trending format"""
         trending_recipes = []
-        for recipe in recipes:
-            trending_score = self._calculate_trending_score(recipe, days_ago)
 
-            if trending_score is not None:
-                # Calculate deltas for ALL durations (with same UTC offset)
+        for recipe in recipes:
+            trending_score = self._calculate_trending_score_for_period(
+                recipe, timeframe, cutoff_iso
+            )
+
+            if trending_score is not None and trending_score > 0:
+                # Get deltas for all timeframes
                 all_deltas = {}
-                for dur_key, dur_days in self.DURATIONS.items():
-                    delta_data = self._get_delta_for_duration(
-                        recipe['id'],
-                        dur_days,
-                        utc_offset_seconds
-                    )
-                    all_deltas[dur_key] = delta_data
+                for timeframe_key, info in self.TIMEFRAMES.items():
+                    if timeframe_key in ['today', 'week']:
+                        # Calendar timeframes need fresh calculation
+                        delta_data = self._get_delta_for_timeframe(
+                            recipe['id'], timeframe_key
+                        )
+                    else:
+                        # Rolling timeframes
+                        delta_data = self._get_delta_for_rolling(
+                            recipe['id'], info.get('hours', 24)
+                        )
+                    all_deltas[timeframe_key] = delta_data
 
                 trending_recipes.append({
                     'id': recipe['id'],
@@ -77,127 +154,173 @@ class TrendingCalculator:
                     },
                     'deltas': all_deltas,
                     'trending_score': trending_score,
-                    'duration': duration
+                    'timeframe': timeframe,
+                    'cutoff_time': cutoff_iso
                 })
 
         # Sort by trending score (descending)
         trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
         # Apply limit
-        result = trending_recipes[:limit]
+        return trending_recipes[:limit]
 
-        logger.info(f"  ✓ Found {len(result)} trending recipes (from {len(recipes)} total)")
-
-        return result
-
-    def _get_delta_for_duration(self, recipe_id: str, days_ago: int, utc_offset_seconds: int = 0) -> Dict:
-        """Get delta information for a specific duration"""
-        # Get current stats
-        current = self.database.get_recipe_current(recipe_id)
-        if not current:
-            return {
-                'installs': 0,
-                'forks': 0,
-                'popularity': 0,
-                'past_snapshot_date': None
-            }
-
-        # Get past stats with UTC offset consideration
-        past = self.database.get_recipe_delta_with_offset(recipe_id, days_ago, utc_offset_seconds)
-
-        if past:
-            return {
-                'installs': current['installs'] - past['installs'],
-                'forks': current['forks'] - past['forks'],
-                'popularity': current['popularity_score'] - past['popularity_score'],
-                'past_snapshot_date': past['snapshot_date']
-            }
-        else:
-            # No historical data for this duration
-            return {
-                'installs': current['installs'],
-                'forks': current['forks'],
-                'popularity': current['popularity_score'],
-                'past_snapshot_date': None
-            }
-
-    def _calculate_trending_score(self, recipe: Dict, days_ago: int) -> float:
+    def _calculate_trending_score_for_period(self, recipe: Dict, timeframe: str, cutoff_iso: str = None) -> float:
         """
-        Calculate trending score for a recipe
+        Calculate trending score for a recipe over a specific period
 
-        Trending score = (current_popularity - past_popularity) / days
-        This gives us the average daily growth rate
-
-        For new recipes without history, we use current popularity / days_since_creation
+        For rolling windows: (current - past) / hours_in_period * 24
+        For calendar periods: (current - past) / days_since_period_start
         """
         current_popularity = recipe['current_popularity']
         past_popularity = recipe.get('past_popularity')
 
-        # If we have historical data, calculate delta
-        if past_popularity is not None:
-            delta = current_popularity - past_popularity
-
-            # Avoid division by zero and negative scores
-            if days_ago > 0:
-                return max(0, delta / days_ago)
+        if past_popularity is None:
+            # No historical data for this period
+            if timeframe in ['today', 'week']:
+                # For calendar periods with no history, use current stats
+                # but penalize to avoid favoring brand new recipes
+                return current_popularity * 0.3
             else:
+                # For rolling windows with no history
                 return 0
 
-        # For new recipes without history, penalize them slightly
-        # to avoid favoring brand new recipes with few installs
-        if current_popularity > 0:
-            # Use half the score to avoid favoring too heavily
-            return (current_popularity / (days_ago * 2)) if days_ago > 0 else 0
+        delta = current_popularity - past_popularity
 
-        return 0
+        if delta <= 0:
+            return 0
 
-    def get_trending_all_durations(self, limit: int = 10, utc_offset_seconds: int = 0) -> Dict[str, List[Dict]]:
-        """Get trending recipes for all duration periods"""
+        # Calculate normalized score
+        if timeframe in ['today', 'week']:
+            # Calendar periods: score per day
+            if timeframe == 'today':
+                # Today: hours passed / 24
+                hours_passed = (datetime.utcnow() - datetime.fromisoformat(cutoff_iso)).total_seconds() / 3600
+                days = hours_passed / 24
+            else:
+                # Week: days since Monday
+                days = (datetime.utcnow() - datetime.fromisoformat(cutoff_iso)).total_seconds() / 86400
+
+            if days > 0:
+                return delta / days
+            else:
+                return delta * 24  # First hour of period
+
+        else:
+            # Rolling windows: score per day (normalized)
+            timeframe_info = self.TIMEFRAMES[timeframe]
+            hours = timeframe_info.get('hours', 24)
+            days = hours / 24
+
+            if days > 0:
+                return delta / days
+            else:
+                return delta
+
+    def _get_local_midnight(self, utc_offset_seconds: int) -> datetime:
+        """Get the most recent local midnight in UTC"""
+        now_utc = datetime.utcnow()
+        local_now = now_utc + timedelta(seconds=utc_offset_seconds)
+        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return local_midnight - timedelta(seconds=utc_offset_seconds)
+
+    def _get_week_start(self, utc_offset_seconds: int) -> datetime:
+        """Get start of week (Monday) in local time, converted to UTC"""
+        now_utc = datetime.utcnow()
+        local_now = now_utc + timedelta(seconds=utc_offset_seconds)
+
+        # Monday is 0, Sunday is 6
+        days_since_monday = local_now.weekday()
+
+        # Go back to Monday at 00:00 local time
+        local_monday = local_now - timedelta(days=days_since_monday)
+        local_monday_midnight = local_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        return local_monday_midnight - timedelta(seconds=utc_offset_seconds)
+
+    def _get_delta_for_timeframe(self, recipe_id: str, timeframe: str) -> Dict:
+        """Get delta for a specific timeframe"""
+        # This would be implemented in the database layer
+        # For now, return placeholder
+        return {
+            'installs': 0,
+            'forks': 0,
+            'popularity': 0,
+            'timeframe': timeframe,
+            'has_data': False
+        }
+
+    def _get_delta_for_rolling(self, recipe_id: str, hours: int) -> Dict:
+        """Get delta for a rolling timeframe"""
+        # This would be implemented in the database layer
+        return {
+            'installs': 0,
+            'forks': 0,
+            'popularity': 0,
+            'hours': hours,
+            'has_data': False
+        }
+
+    def _get_calculation_info(self, timeframe: str, utc_offset_seconds: int) -> Dict:
+        """Get information about how the trending was calculated"""
+        info = {
+            'utc_offset_applied': utc_offset_seconds,
+            'current_utc_time': datetime.utcnow().isoformat()
+        }
+
+        timeframe_info = self.TIMEFRAMES[timeframe]
+
+        if timeframe_info['type'] == 'calendar':
+            if timeframe == 'today':
+                midnight = self._get_local_midnight(utc_offset_seconds)
+                info.update({
+                    'period_start': midnight.isoformat(),
+                    'period_type': 'calendar_day',
+                    'local_midnight': midnight.isoformat()
+                })
+            elif timeframe == 'week':
+                week_start = self._get_week_start(utc_offset_seconds)
+                info.update({
+                    'period_start': week_start.isoformat(),
+                    'period_type': 'calendar_week',
+                    'week_start': week_start.isoformat()
+                })
+        else:
+            hours = timeframe_info.get('hours', 24)
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            info.update({
+                'period_start': cutoff.isoformat(),
+                'period_type': 'rolling_window',
+                'window_hours': hours
+            })
+
+        return info
+
+    def get_all_timeframes_trending(self, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
+        """Get trending recipes for all timeframes"""
         results = {}
 
-        for duration in self.DURATIONS.keys():
+        for timeframe in ['today', 'week', '24h', '7d', '30d']:
             try:
-                results[duration] = self.calculate_trending(duration, limit, utc_offset_seconds)
+                results[timeframe] = self.calculate_trending(timeframe, limit, utc_offset_seconds)
             except Exception as e:
-                logger.error(f"✗ Error calculating trending for {duration}: {e}")
-                results[duration] = []
+                logger.error(f"✗ Error calculating trending for {timeframe}: {e}")
+                results[timeframe] = {
+                    'error': str(e),
+                    'timeframe': timeframe
+                }
 
         return results
 
-    def get_recipe_momentum(self, recipe_id: str, utc_offset_seconds: int = 0) -> Dict:
-        """
-        Get momentum metrics for a specific recipe across all durations
+    # Backward compatibility aliases
+    def calculate_trending_with_offset(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
+        """Alias for backward compatibility"""
+        # Map old duration names to new ones
+        duration_map = {
+            '1d': '24h',
+            '1w': '7d',
+            '1m': '30d',
+            '6m': '180d'
+        }
 
-        Returns:
-            Dict with trending scores for each duration
-        """
-        momentum = {}
-
-        for duration, days_ago in self.DURATIONS.items():
-            try:
-                # Get recipe with delta
-                recipes = self.database.get_all_recipes_with_delta(days_ago, utc_offset_seconds)
-                recipe = next((r for r in recipes if r['id'] == recipe_id), None)
-
-                if recipe:
-                    score = self._calculate_trending_score(recipe, days_ago)
-                    delta_popularity = recipe['current_popularity'] - (recipe.get('past_popularity') or 0)
-
-                    momentum[duration] = {
-                        'trending_score': score,
-                        'delta_popularity': delta_popularity,
-                        'days_ago': days_ago
-                    }
-                else:
-                    momentum[duration] = None
-
-            except Exception as e:
-                logger.error(f"✗ Error calculating momentum for {duration}: {e}")
-                momentum[duration] = None
-
-        return momentum
-
-    # Alias for backward compatibility
-    def calculate_trending_with_offset(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> List[Dict]:
-        """Alias for calculate_trending with UTC offset"""
-        return self.calculate_trending(duration, limit, utc_offset_seconds)
+        timeframe = duration_map.get(duration, duration)
+        return self.calculate_trending(timeframe, limit, utc_offset_seconds)
