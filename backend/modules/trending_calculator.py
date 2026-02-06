@@ -213,40 +213,14 @@ class TrendingCalculator:
                                              utc_offset_seconds: int = 0,
                                              cutoff_iso: str = None) -> float:
         """
-        Calculate trending score using recipe age (published_at) for fairness
+        Calculate trending score with proper handling of published_at
         """
         try:
             recipe_id = recipe['id']
             has_history = recipe.get('has_historical_data', False)
             popularity_delta = recipe.get('popularity_delta', 0) or 0
-            current_popularity = recipe.get('popularity', 0) or 0
-
-            # Get recipe's published date from the recipe dict (already in there as created_at)
-            published_at_str = recipe.get('created_at')  # This is actually published_at from your parser
-
-            if not published_at_str:
-                # No published date - use conservative calculation
-                return self._calculate_conservative_score(
-                    has_history, popularity_delta, current_popularity,
-                    timeframe, cutoff_iso
-                )
-
-            # Parse published date
-            try:
-                published_at = datetime.fromisoformat(published_at_str.replace('Z', ''))
-            except ValueError:
-                # Try different date formats
-                try:
-                    published_at = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%S.%fZ')
-                except ValueError:
-                    try:
-                        published_at = datetime.strptime(published_at_str, '%Y-%m-%dT%H:%M:%SZ')
-                    except ValueError:
-                        # Can't parse date - use conservative calculation
-                        return self._calculate_conservative_score(
-                            has_history, popularity_delta, current_popularity,
-                            timeframe, cutoff_iso
-                        )
+            published_at_str = recipe.get('published_at')
+            recipe_age_days = recipe.get('recipe_age_days', 0)
 
             # Determine cutoff time for this timeframe
             now_utc = datetime.utcnow()
@@ -261,87 +235,101 @@ class TrendingCalculator:
                     hours = timeframe_info.get('hours', 24)
                     cutoff = now_utc - timedelta(hours=hours)
                 else:
-                    cutoff = now_utc - timedelta(days=1)  # Default fallback
+                    cutoff = now_utc - timedelta(days=1)
             else:
                 cutoff = now_utc - timedelta(days=1)
 
-            # CRITICAL: Check if recipe was published AFTER the cutoff
-            # If yes, it's a NEW recipe in this period
-            if published_at > cutoff:
-                # Calculate how long it's been active IN THIS PERIOD
-                period_start = max(published_at, cutoff)
-                active_seconds = (now_utc - period_start).total_seconds()
-                active_hours = active_seconds / 3600
+            # CRITICAL: Check if we have a valid published date
+            if published_at_str and recipe_age_days > 0:
+                # Try to parse published date
+                try:
+                    published_at = datetime.fromisoformat(published_at_str.replace('Z', ''))
+                except ValueError:
+                    published_at = None
 
-                # Avoid division by zero
-                if active_hours <= 0:
-                    return 0.0
+                # CASE 1: Recipe existed BEFORE cutoff (it's an established recipe)
+                if published_at and published_at < cutoff:
+                    if has_history:
+                        # We have actual historical data - use normal calculation
+                        if popularity_delta <= 0:
+                            return 0.0
 
-                # Normalize score to "per day" rate
-                active_days = max(0.5, active_hours / 24)  # At least 0.5 day to avoid huge scores
+                        if timeframe == 'today':
+                            if cutoff_iso:
+                                try:
+                                    hours_passed = (now_utc - datetime.fromisoformat(
+                                        cutoff_iso.replace('Z', ''))).total_seconds() / 3600
+                                    days = max(0.1, hours_passed / 24)
+                                except Exception:
+                                    days = 1.0
+                            else:
+                                days = 1.0
+                            return float(popularity_delta) / days
+                        else:
+                            timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
+                            hours = timeframe_info.get('hours', 24)
+                            days = max(0.1, hours / 24)
+                            return float(popularity_delta) / days
+                    else:
+                        # Recipe existed before cutoff but we don't have historical data
+                        # This means we don't have a snapshot from before the cutoff
+                        # We CANNOT accurately calculate trending for this period!
+                        # Return a very conservative estimate
 
-                # For new recipes, we might not have historical data yet
-                # So popularity_delta might be their total popularity
-                if not has_history and popularity_delta == current_popularity:
-                    # This is a brand new recipe with all its popularity gained recently
-                    score = float(popularity_delta) / active_days
+                        # Option A: Return 0 (can't calculate)
+                        # return 0.0
 
-                    # Additional penalty: new recipes shouldn't dominate
-                    # Adjust based on how new they are
-                    hours_since_published = (now_utc - published_at).total_seconds() / 3600
-                    if hours_since_published < 6:  # Very new (less than 6 hours)
-                        score *= 0.7
-                    elif hours_since_published < 24:  # Less than 1 day
-                        score *= 0.8
+                        # Option B: Conservative penalty (heavily penalize)
+                        # Assume the growth happened over a longer period
+                        if timeframe == 'today':
+                            # For today, assume at least 12 hours of activity
+                            return float(popularity_delta) / 0.5
+                        elif timeframe == 'week':
+                            # For week, assume at least 3.5 days (half the week)
+                            return float(popularity_delta) / 3.5
+                        else:
+                            # For rolling windows, assume half the period
+                            timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
+                            hours = timeframe_info.get('hours', 24)
+                            days = max(1.0, hours / 48)  # Half the period
+                            return float(popularity_delta) / days
 
-                    return score
-                else:
-                    # We have actual delta data for this new recipe
+                # CASE 2: Recipe was published AFTER cutoff (it's new in this period)
+                elif published_at and published_at > cutoff:
+                    # Calculate how long it's been active in this period
+                    period_start = max(published_at, cutoff)
+                    active_seconds = (now_utc - period_start).total_seconds()
+                    active_hours = active_seconds / 3600
+
+                    if active_hours <= 0:
+                        return 0.0
+
+                    # Normalize to daily rate
+                    active_days = max(0.5, active_hours / 24)
+
+                    # For truly new recipes (published today), use the delta
                     return float(popularity_delta) / active_days
 
-            # Recipe was published BEFORE cutoff - it existed in previous period
-            if has_history:
-                # We have actual historical data
-                if popularity_delta <= 0:
-                    return 0.0
-
-                # Normalize by period length
-                if timeframe == 'today':
-                    if cutoff_iso:
-                        try:
-                            hours_passed = (now_utc - datetime.fromisoformat(
-                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
-                            days = max(0.1, hours_passed / 24)
-                        except Exception:
-                            days = 1.0
-                    else:
-                        days = 1.0
-                    return float(popularity_delta) / days
-                else:
-                    timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                    hours = timeframe_info.get('hours', 24)
-                    days = max(0.1, hours / 24)
-                    return float(popularity_delta) / days
-            else:
-                # Recipe existed before cutoff but we don't have historical data
-                # This is unusual - use conservative calculation
-                return self._calculate_conservative_score(
-                    has_history, popularity_delta, current_popularity,
-                    timeframe, cutoff_iso
-                )
+            # CASE 3: No published date or other issues
+            # Use conservative calculation
+            return self._calculate_conservative_score(
+                has_history, popularity_delta, timeframe, cutoff_iso
+            )
 
         except Exception as e:
             logger.error(f"Error calculating trending score for {recipe.get('id', 'unknown')}: {e}")
             return 0.0
 
     def _calculate_conservative_score(self, has_history: bool, popularity_delta: int,
-                                      current_popularity: int, timeframe: str,
-                                      cutoff_iso: str = None) -> float:
+                                      timeframe: str, cutoff_iso: str = None) -> float:
         """
-        Conservative score calculation when we don't have complete information
+        Conservative score calculation when we have limited information
         """
-        if has_history and popularity_delta > 0:
-            # We have history and positive delta
+        if popularity_delta <= 0:
+            return 0.0
+
+        if has_history:
+            # We have historical data
             if timeframe == 'today':
                 if cutoff_iso:
                     try:
@@ -358,26 +346,20 @@ class TrendingCalculator:
                 hours = timeframe_info.get('hours', 24)
                 days = max(0.1, hours / 24)
                 return float(popularity_delta) / days
-
-        elif not has_history and popularity_delta > 0:
-            # No history but positive delta (likely new recipe)
-            # Apply penalty based on timeframe
+        else:
+            # No historical data - heavily penalize
             if timeframe == 'today':
-                # For today, assume at least half a day of activity
+                # Assume growth happened over at least 12 hours
                 return float(popularity_delta) / 0.5
             elif timeframe == 'week':
-                # For week, assume at least 1 day of activity
-                return float(popularity_delta) / 1.0
+                # Assume growth happened over at least 3.5 days
+                return float(popularity_delta) / 3.5
             else:
-                # For rolling timeframes
+                # For rolling windows, assume half the period
                 timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
                 hours = timeframe_info.get('hours', 24)
-                days = max(1.0, hours / 24)  # At least 1 day
+                days = max(1.0, hours / 48)  # Half the period
                 return float(popularity_delta) / days
-
-        else:
-            # No growth or negative growth
-            return 0.0
 
     def _get_delta_for_timeframe(self, recipe_id: str, timeframe: str, utc_offset_seconds: int = 0) -> Dict:
         """Get delta for a specific timeframe"""
