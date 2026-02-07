@@ -40,6 +40,7 @@ IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
 TRMNL_IPS_API = 'https://trmnl.com/api/ips'
 LOCALHOST_IPS = ['127.0.0.1', '::1', 'localhost']
 DATABASE_PATH = os.getenv('DATABASE_PATH', '/data/recipes.db')
+FORCE_REFRESH = os.getenv('FORCE_REFRESH', 'false').lower() == 'true'
 WORKER_LOCK_FILE = os.getenv('WORKER_LOCK_FILE', '/tmp/trmnl-primary-worker.lock')
 
 # Global IP whitelist state
@@ -387,7 +388,7 @@ def recipe_fetch_worker():
     """Fetch recipes every hour, with immediate execution on startup"""
 
     # First, always fetch immediately on startup (catch up any missed hours)
-    if db.should_fetch_all_recipes(max_hours=1):
+    if FORCE_REFRESH or db.should_fetch_all_recipes(max_hours=1):
         logger.info("🚀 Starting immediate fetch on startup...")
         try:
             start_time = time.time()
