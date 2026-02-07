@@ -246,6 +246,22 @@ class Database:
         if current_version < 3:
             self._migrate_from_v2_to_v3()
             self._set_schema_version(3)
+
+        # user_recipes cache table (no migration needed)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_recipes (
+                user_id TEXT NOT NULL,
+                recipe_id TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                UNIQUE(user_id, recipe_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_recipes_user
+            ON user_recipes(user_id)
+        """)
+        conn.commit()
+
         logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
@@ -328,17 +344,18 @@ class Database:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def get_recipes_with_delta_since(self, cutoff: datetime) -> List[Dict]:
+    def get_recipes_with_delta_since(self, cutoff: datetime, recipe_ids: Optional[List[str]] = None) -> List[Dict]:
         """
-        Get all recipes with their stats since a specific cutoff time
+        Get all recipes with their stats since a specific cutoff time.
+        Optionally filter to only the given recipe IDs.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cutoff_iso = cutoff.isoformat()
 
-        cursor.execute("""
-            SELECT 
+        query = """
+            SELECT
                 r.id,
                 r.name,
                 r.description,
@@ -355,7 +372,6 @@ class Database:
                 CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
             LEFT JOIN (
-                -- Get the most recent snapshot BEFORE cutoff for each recipe
                 SELECT DISTINCT
                     recipe_id,
                     installs,
@@ -363,14 +379,24 @@ class Database:
                     popularity_score,
                     snapshot_timestamp,
                     ROW_NUMBER() OVER (
-                        PARTITION BY recipe_id 
+                        PARTITION BY recipe_id
                         ORDER BY snapshot_timestamp DESC
                     ) as rn
                 FROM recipe_history
                 WHERE snapshot_timestamp <= ?
             ) h ON r.id = h.recipe_id AND h.rn = 1
-            ORDER BY r.popularity_score DESC
-        """, (cutoff_iso,))
+        """
+
+        params: list = [cutoff_iso]
+
+        if recipe_ids:
+            placeholders = ','.join('?' * len(recipe_ids))
+            query += f" WHERE r.id IN ({placeholders})"
+            params.extend(recipe_ids)
+
+        query += " ORDER BY r.popularity_score DESC"
+
+        cursor.execute(query, params)
 
         results = []
         for row in cursor.fetchall():
@@ -605,9 +631,10 @@ class Database:
 
         return result
 
-    def get_recipes_with_delta_since_hours(self, hours_ago: int, user_id: Optional[str] = None) -> List[Dict]:
+    def get_recipes_with_delta_since_hours(self, hours_ago: int, recipe_ids: Optional[List[str]] = None) -> List[Dict]:
         """
-        Get all recipes with their stats since N hours ago using hourly snapshots
+        Get all recipes with their stats since N hours ago using hourly snapshots.
+        Optionally filter to only the given recipe IDs.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -615,9 +642,8 @@ class Database:
         cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
-        # Build query with optional user filter
         query = """
-            SELECT 
+            SELECT
                 r.id,
                 r.name,
                 r.description,
@@ -635,7 +661,6 @@ class Database:
                 CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
             LEFT JOIN (
-                -- Get the most recent hourly snapshot BEFORE cutoff for each recipe
                 SELECT DISTINCT
                     recipe_id,
                     installs,
@@ -643,7 +668,7 @@ class Database:
                     popularity_score,
                     snapshot_timestamp,
                     ROW_NUMBER() OVER (
-                        PARTITION BY recipe_id 
+                        PARTITION BY recipe_id
                         ORDER BY snapshot_timestamp DESC
                     ) as rn
                 FROM recipe_hourly_snapshots
@@ -651,11 +676,12 @@ class Database:
             ) h ON r.id = h.recipe_id AND h.rn = 1
         """
 
-        params = [cutoff_iso]
+        params: list = [cutoff_iso]
 
-        if user_id:
-            query += " WHERE r.user_id = ?"
-            params.append(user_id)
+        if recipe_ids:
+            placeholders = ','.join('?' * len(recipe_ids))
+            query += f" WHERE r.id IN ({placeholders})"
+            params.extend(recipe_ids)
 
         query += " ORDER BY r.popularity_score DESC"
 
@@ -675,6 +701,43 @@ class Database:
             results.append(row_dict)
 
         return results
+
+    def get_user_recipe_ids(self, user_id: str) -> List[str]:
+        """Return cached recipe IDs for a user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT recipe_id FROM user_recipes WHERE user_id = ?", (user_id,))
+        return [row['recipe_id'] for row in cursor.fetchall()]
+
+    def save_user_recipes(self, user_id: str, recipe_ids: List[str]):
+        """Replace all cached recipe IDs for a user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute("DELETE FROM user_recipes WHERE user_id = ?", (user_id,))
+        for rid in recipe_ids:
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_recipes (user_id, recipe_id, fetched_at) VALUES (?, ?, ?)",
+                (user_id, rid, now)
+            )
+        conn.commit()
+
+    def is_user_recipes_stale(self, user_id: str, max_hours: int = 24) -> bool:
+        """Check if the user recipe cache needs a refresh"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT MIN(fetched_at) as oldest FROM user_recipes WHERE user_id = ?",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        if not row or not row['oldest']:
+            return True
+        try:
+            fetched = datetime.fromisoformat(row['oldest'])
+            return (datetime.utcnow() - fetched).total_seconds() / 3600 > max_hours
+        except Exception:
+            return True
 
     def get_last_recipe_fetch_time(self) -> Optional[datetime]:
         """Get when recipes were last fetched"""

@@ -70,6 +70,41 @@ class RecipeFetcher:
         return result
 
 
+    def fetch_user_recipe_ids(self, user_id: str) -> List[str]:
+        """Fetch recipe IDs belonging to a user from the TRMNL API (synchronous, paged)"""
+        logger.info(f"📥 Fetching recipes for user {user_id}...")
+        recipe_ids = []
+        page = 1
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                while True:
+                    response = client.get(
+                        self.base_url,
+                        params={'user_id': user_id, 'page': page}
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+
+                    recipes = data.get('data', [])
+                    if not recipes:
+                        break
+
+                    recipe_ids.extend(str(r['id']) for r in recipes if 'id' in r)
+
+                    if not data.get('next_page_url'):
+                        break
+
+                    page += 1
+
+            self.database.save_user_recipes(user_id, recipe_ids)
+            logger.info(f"✓ Cached {len(recipe_ids)} recipe IDs for user {user_id} ({page} page(s))")
+            return recipe_ids
+
+        except Exception as e:
+            logger.error(f"✗ Error fetching recipes for user {user_id}: {e}")
+            return self.database.get_user_recipe_ids(user_id)
+
     async def fetch_all_recipes(self) -> int:
         """
         Fetch all recipes from TRMNL API (all pages)

@@ -37,7 +37,8 @@ class TrendingCalculator:
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
+    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
+                           recipe_ids: Optional[List[str]] = None) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -46,7 +47,7 @@ class TrendingCalculator:
                       or legacy '1d', '1w', '1m', '6m'
             limit: Maximum number of results to return
             utc_offset_seconds: UTC offset in seconds for calendar calculations
-            user_id: Optional user ID to filter recipes by user
+            recipe_ids: Optional list of recipe IDs to restrict results to
 
         Returns:
             Dict with timeframe info and trending recipes
@@ -58,11 +59,12 @@ class TrendingCalculator:
 
         if timeframe_info['type'] == 'calendar':
             trending_recipes = self._calculate_calendar_trending(
-                timeframe, limit, utc_offset_seconds
+                timeframe, limit, utc_offset_seconds, recipe_ids=recipe_ids
             )
         else:
             trending_recipes = self._calculate_rolling_trending(
-                timeframe, timeframe_info['hours'], limit, utc_offset_seconds
+                timeframe, timeframe_info['hours'], limit, utc_offset_seconds,
+                recipe_ids=recipe_ids
             )
 
         # Build comprehensive response
@@ -79,7 +81,8 @@ class TrendingCalculator:
         return response
 
     def _calculate_calendar_trending(self, timeframe: str, limit: int,
-                                     utc_offset_seconds: int) -> List[Dict]:
+                                     utc_offset_seconds: int,
+                                     recipe_ids: Optional[List[str]] = None) -> List[Dict]:
         """Calculate trending based on calendar boundaries"""
         now_utc = datetime.utcnow()
 
@@ -99,20 +102,21 @@ class TrendingCalculator:
             raise ValueError(f"Unknown calendar timeframe: {timeframe}")
 
         # Get recipes with delta since cutoff
-        recipes = self.database.get_recipes_with_delta_since(cutoff)
+        recipes = self.database.get_recipes_with_delta_since(cutoff, recipe_ids=recipe_ids)
 
 
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
                                               cutoff_iso=cutoff.isoformat())
 
     def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int,
-                                    utc_offset_seconds: int, user_id: Optional[str] = None) -> List[Dict]:
+                                    utc_offset_seconds: int,
+                                    recipe_ids: Optional[List[str]] = None) -> List[Dict]:
         """Calculate trending based on rolling time window"""
         logger.info(f"⏰ Calculating '{timeframe}' trending ({hours}h rolling window)" +
-                    (f" for user {user_id}" if user_id else ""))
+                    (f" filtered to {len(recipe_ids)} recipes" if recipe_ids else ""))
 
         # Get recipes with delta since cutoff using hourly snapshots
-        recipes = self.database.get_recipes_with_delta_since_hours(hours, user_id)
+        recipes = self.database.get_recipes_with_delta_since_hours(hours, recipe_ids=recipe_ids)
 
         # Log a one-line summary with the actual snapshot age range
         snapshot_ages = []
