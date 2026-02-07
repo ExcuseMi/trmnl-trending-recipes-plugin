@@ -769,3 +769,71 @@ class Database:
 
         hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
         return hours_since > max_hours
+    def compute_global_ranks(self, timeframe: str, utc_offset_seconds: int) -> Dict[str, Dict[str, int]]:
+        """Compute current global rank and rank improvement"""
+        # Get current rankings
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, popularity_score
+            FROM recipes
+            WHERE popularity_score > 0
+            ORDER BY popularity_score DESC
+        """)
+
+        current_recipes = cursor.fetchall()
+        current_ranks = {row['id']: rank + 1 for rank, row in enumerate(current_recipes)}
+
+        # Get timeframe cutoff
+        timeframe_info = self.TIMEFRAMES[timeframe]
+        if timeframe_info['type'] == 'calendar':
+            if timeframe == 'today':
+                cutoff = self._get_local_midnight(utc_offset_seconds)
+            else:
+                cutoff = self._get_week_start(utc_offset_seconds)
+        else:
+            cutoff = datetime.utcnow() - timedelta(hours=timeframe_info['hours'])
+
+        # Get popularity at cutoff time
+        cutoff_iso = cutoff.isoformat()
+        cursor.execute("""
+            SELECT recipe_id as id, popularity_score
+            FROM recipe_history
+            WHERE snapshot_timestamp <= ?
+            AND snapshot_timestamp = (
+                SELECT MAX(snapshot_timestamp)
+                FROM recipe_history as h2
+                WHERE h2.recipe_id = recipe_history.recipe_id
+                AND h2.snapshot_timestamp <= ?
+            )
+            UNION
+            SELECT recipe_id as id, popularity_score
+            FROM recipe_hourly_snapshots
+            WHERE snapshot_timestamp <= ?
+            AND snapshot_timestamp = (
+                SELECT MAX(snapshot_timestamp)
+                FROM recipe_hourly_snapshots as h2
+                WHERE h2.recipe_id = recipe_hourly_snapshots.recipe_id
+                AND h2.snapshot_timestamp <= ?
+            )
+        """, (cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso))
+
+        past_recipes = cursor.fetchall()
+
+        # Sort past recipes by popularity to get past ranks
+        past_sorted = sorted(past_recipes, key=lambda x: x['popularity_score'], reverse=True)
+        past_ranks = {row['id']: rank + 1 for rank, row in enumerate(past_sorted)}
+
+        # Compute result
+        result = {}
+        for recipe_id, current_rank in current_ranks.items():
+            past_rank = past_ranks.get(recipe_id)
+            rank_improvement = past_rank - current_rank if past_rank else None
+
+            result[recipe_id] = {
+                'global_rank': current_rank,
+                'rank_difference': rank_improvement
+            }
+
+        return result
