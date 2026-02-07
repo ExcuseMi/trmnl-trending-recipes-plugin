@@ -71,10 +71,9 @@ class TrendingCalculator:
             )
 
         # Attach global trending rank when filtering by user
-        if recipe_ids is not None:
-            global_ranks = self._compute_global_ranks(timeframe, utc_offset_seconds)
-            for recipe in trending_recipes:
-                recipe['global_rank'] = global_ranks.get(recipe['id'])
+        global_ranks = self._compute_global_ranks(timeframe, utc_offset_seconds)
+        for recipe in trending_recipes:
+            recipe['global_rank'] = global_ranks.get(recipe['id'])
 
         # Build comprehensive response
         response = {
