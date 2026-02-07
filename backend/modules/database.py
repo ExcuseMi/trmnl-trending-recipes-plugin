@@ -769,6 +769,7 @@ class Database:
 
         hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
         return hours_since > max_hours
+
     def compute_global_ranks(self, timeframe: str, cutoff: datetime) -> Dict[str, Dict[str, int]]:
         """Compute current global rank and rank improvement"""
         # Get current rankings
@@ -785,30 +786,55 @@ class Database:
         current_recipes = cursor.fetchall()
         current_ranks = {row['id']: rank + 1 for rank, row in enumerate(current_recipes)}
 
-
         # Get popularity at cutoff time
         cutoff_iso = cutoff.isoformat()
+
+        # Get ALL recipes that existed at cutoff time
         cursor.execute("""
-            SELECT recipe_id as id, popularity_score
-            FROM recipe_history
-            WHERE snapshot_timestamp <= ?
-            AND snapshot_timestamp = (
-                SELECT MAX(snapshot_timestamp)
-                FROM recipe_history as h2
-                WHERE h2.recipe_id = recipe_history.recipe_id
-                AND h2.snapshot_timestamp <= ?
+            WITH historical_recipes AS (
+                SELECT DISTINCT recipe_id as id
+                FROM recipe_history
+                WHERE snapshot_timestamp <= ?
+                UNION
+                SELECT DISTINCT recipe_id as id
+                FROM recipe_hourly_snapshots
+                WHERE snapshot_timestamp <= ?
+            ),
+            latest_popularity AS (
+                SELECT 
+                    rh.recipe_id as id,
+                    rh.popularity_score,
+                    rh.snapshot_timestamp
+                FROM recipe_history rh
+                WHERE rh.snapshot_timestamp = (
+                    SELECT MAX(snapshot_timestamp)
+                    FROM recipe_history rh2
+                    WHERE rh2.recipe_id = rh.recipe_id
+                    AND rh2.snapshot_timestamp <= ?
+                )
+                UNION ALL
+                SELECT 
+                    rhs.recipe_id as id,
+                    rhs.popularity_score,
+                    rhs.snapshot_timestamp
+                FROM recipe_hourly_snapshots rhs
+                WHERE rhs.snapshot_timestamp = (
+                    SELECT MAX(snapshot_timestamp)
+                    FROM recipe_hourly_snapshots rhs2
+                    WHERE rhs2.recipe_id = rhs.recipe_id
+                    AND rhs2.snapshot_timestamp <= ?
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM recipe_history rh3
+                    WHERE rh3.recipe_id = rhs.recipe_id
+                    AND rh3.snapshot_timestamp <= ?
+                )
             )
-            UNION
-            SELECT recipe_id as id, popularity_score
-            FROM recipe_hourly_snapshots
-            WHERE snapshot_timestamp <= ?
-            AND snapshot_timestamp = (
-                SELECT MAX(snapshot_timestamp)
-                FROM recipe_hourly_snapshots as h2
-                WHERE h2.recipe_id = recipe_hourly_snapshots.recipe_id
-                AND h2.snapshot_timestamp <= ?
-            )
-        """, (cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso))
+            SELECT id, popularity_score
+            FROM latest_popularity
+            WHERE popularity_score > 0
+            ORDER BY popularity_score DESC
+        """, (cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso))
 
         past_recipes = cursor.fetchall()
 
@@ -816,11 +842,19 @@ class Database:
         past_sorted = sorted(past_recipes, key=lambda x: x['popularity_score'], reverse=True)
         past_ranks = {row['id']: rank + 1 for rank, row in enumerate(past_sorted)}
 
+        # For recipes that exist now but didn't exist in the past, assign worst rank
+        total_past_recipes = len(past_sorted)
+        worst_past_rank = total_past_recipes + 1  # One worse than the worst ranked
+
         # Compute result
         result = {}
         for recipe_id, current_rank in current_ranks.items():
             past_rank = past_ranks.get(recipe_id)
-            rank_improvement = past_rank - current_rank if past_rank else None
+            if past_rank is None:
+                # Recipe didn't exist in the past - treat it as new with worst possible past rank
+                rank_improvement = worst_past_rank - current_rank
+            else:
+                rank_improvement = past_rank - current_rank
 
             result[recipe_id] = {
                 'global_rank': current_rank,

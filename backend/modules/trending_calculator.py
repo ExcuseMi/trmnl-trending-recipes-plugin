@@ -70,7 +70,6 @@ class TrendingCalculator:
                 recipe_ids=recipe_ids, include_all=include_all
             )
 
-        # Attach global trending rank when filtering by user
         # Get timeframe cutoff
         timeframe_info = self.TIMEFRAMES[timeframe]
         if timeframe_info['type'] == 'calendar':
