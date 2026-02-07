@@ -307,15 +307,22 @@ def get_trending():
         }), 400
 
     try:
+        # Resolve user_id to recipe_ids if requested
+        user_id = request.args.get('user_id')
+        recipe_ids = None
 
+        if user_id:
+            if db.is_user_recipes_stale(user_id):
+                recipe_ids = recipe_fetcher.fetch_user_recipe_ids(user_id)
+            else:
+                recipe_ids = db.get_user_recipe_ids(user_id)
 
-        # Calculate trending (this will filter by user_id if provided)
         trending_data = trending_calculator.calculate_trending(
             timeframe=timeframe,
             limit=limit,
-            utc_offset_seconds=utc_offset
+            utc_offset_seconds=utc_offset,
+            recipe_ids=recipe_ids
         )
-
 
         return jsonify(trending_data)
 
