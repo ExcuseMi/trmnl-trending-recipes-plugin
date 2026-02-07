@@ -38,7 +38,8 @@ class TrendingCalculator:
         self.database = database
 
     def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
-                           recipe_ids: Optional[List[str]] = None) -> Dict:
+                           recipe_ids: Optional[List[str]] = None,
+                           include_all: bool = False) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -48,6 +49,7 @@ class TrendingCalculator:
             limit: Maximum number of results to return
             utc_offset_seconds: UTC offset in seconds for calendar calculations
             recipe_ids: Optional list of recipe IDs to restrict results to
+            include_all: If True, include all recipes (not just trending), sorted by popularity
 
         Returns:
             Dict with timeframe info and trending recipes
@@ -59,12 +61,13 @@ class TrendingCalculator:
 
         if timeframe_info['type'] == 'calendar':
             trending_recipes = self._calculate_calendar_trending(
-                timeframe, limit, utc_offset_seconds, recipe_ids=recipe_ids
+                timeframe, limit, utc_offset_seconds, recipe_ids=recipe_ids,
+                include_all=include_all
             )
         else:
             trending_recipes = self._calculate_rolling_trending(
                 timeframe, timeframe_info['hours'], limit, utc_offset_seconds,
-                recipe_ids=recipe_ids
+                recipe_ids=recipe_ids, include_all=include_all
             )
 
         # Build comprehensive response
@@ -82,7 +85,8 @@ class TrendingCalculator:
 
     def _calculate_calendar_trending(self, timeframe: str, limit: int,
                                      utc_offset_seconds: int,
-                                     recipe_ids: Optional[List[str]] = None) -> List[Dict]:
+                                     recipe_ids: Optional[List[str]] = None,
+                                     include_all: bool = False) -> List[Dict]:
         """Calculate trending based on calendar boundaries"""
         now_utc = datetime.utcnow()
 
@@ -104,13 +108,14 @@ class TrendingCalculator:
         # Get recipes with delta since cutoff
         recipes = self.database.get_recipes_with_delta_since(cutoff, recipe_ids=recipe_ids)
 
-
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
-                                              cutoff_iso=cutoff.isoformat())
+                                              cutoff_iso=cutoff.isoformat(),
+                                              include_all=include_all)
 
     def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int,
                                     utc_offset_seconds: int,
-                                    recipe_ids: Optional[List[str]] = None) -> List[Dict]:
+                                    recipe_ids: Optional[List[str]] = None,
+                                    include_all: bool = False) -> List[Dict]:
         """Calculate trending based on rolling time window"""
         logger.info(f"⏰ Calculating '{timeframe}' trending ({hours}h rolling window)" +
                     (f" filtered to {len(recipe_ids)} recipes" if recipe_ids else ""))
@@ -138,10 +143,12 @@ class TrendingCalculator:
         else:
             logger.debug(f"Rolling {timeframe} ({hours}h): {len(recipes)} recipes, no snapshot data")
 
-        return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds)
+        return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
+                                              include_all=include_all)
 
     def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: int,
-                                  utc_offset_seconds: int = 0, cutoff_iso: str = None) -> List[Dict]:
+                                  utc_offset_seconds: int = 0, cutoff_iso: str = None,
+                                  include_all: bool = False) -> List[Dict]:
         """Process recipes into trending format"""
         trending_recipes = []
 
@@ -169,39 +176,44 @@ class TrendingCalculator:
                 cutoff_iso
             )
 
-            if trending_score > 0:
-                # Get delta for the requested timeframe
-                if timeframe in ['today', 'week']:
-                    main_delta = self._get_delta_for_timeframe(
-                        recipe['id'], timeframe, utc_offset_seconds
-                    )
-                else:
-                    timeframe_info = self.TIMEFRAMES[timeframe]
-                    main_delta = self._get_delta_for_rolling(
-                        recipe['id'], timeframe_info.get('hours', 24)
-                    )
+            if not include_all and trending_score <= 0:
+                continue
 
-                trending_recipes.append({
-                    'id': recipe['id'],
-                    'name': recipe['name'],
-                    'description': recipe['description'],
-                    'url': recipe['url'],
-                    'icon_url': recipe['icon_url'],
-                    'thumbnail_url': recipe['thumbnail_url'],
-                    'popularity': recipe['current_popularity'],
-                    'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
-                    'trending_score': trending_score,
-                    'timeframe': timeframe,
-                    'has_historical_data': recipe.get('has_history', False),
-                    'popularity_growth_pct': ((recipe['current_popularity'] - recipe.get('past_popularity', 0)) /
-                                              recipe['current_popularity'] * 100) if recipe[
-                                                                                         'current_popularity'] > 0 else 0,
-                    'published_at': published_at_str,
-                    'recipe_age_days': recipe_age_days  # Include in response
-                })
+            # Get delta for the requested timeframe
+            if timeframe in ['today', 'week']:
+                main_delta = self._get_delta_for_timeframe(
+                    recipe['id'], timeframe, utc_offset_seconds
+                )
+            else:
+                timeframe_info = self.TIMEFRAMES[timeframe]
+                main_delta = self._get_delta_for_rolling(
+                    recipe['id'], timeframe_info.get('hours', 24)
+                )
 
-        # Sort by trending score (descending)
-        trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
+            trending_recipes.append({
+                'id': recipe['id'],
+                'name': recipe['name'],
+                'description': recipe['description'],
+                'url': recipe['url'],
+                'icon_url': recipe['icon_url'],
+                'thumbnail_url': recipe['thumbnail_url'],
+                'popularity': recipe['current_popularity'],
+                'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
+                'trending_score': trending_score,
+                'timeframe': timeframe,
+                'has_historical_data': recipe.get('has_history', False),
+                'popularity_growth_pct': ((recipe['current_popularity'] - recipe.get('past_popularity', 0)) /
+                                          recipe['current_popularity'] * 100) if recipe[
+                                                                                     'current_popularity'] > 0 else 0,
+                'published_at': published_at_str,
+                'recipe_age_days': recipe_age_days
+            })
+
+        # Sort by popularity when showing all, otherwise by trending score
+        if include_all:
+            trending_recipes.sort(key=lambda x: x['popularity'], reverse=True)
+        else:
+            trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
         # Apply limit
         return trending_recipes[:limit]

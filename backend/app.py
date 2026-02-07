@@ -324,7 +324,8 @@ def get_trending():
             timeframe=timeframe,
             limit=limit,
             utc_offset_seconds=utc_offset,
-            recipe_ids=recipe_ids
+            recipe_ids=recipe_ids,
+            include_all=recipe_ids is not None
         )
 
         if user_id:
