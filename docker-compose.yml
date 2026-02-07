@@ -17,6 +17,7 @@ services:
       - ENABLE_IP_WHITELIST=${ENABLE_IP_WHITELIST:-true}
       # Database Configuration
       - DATABASE_PATH=/data/recipes.db
+      - DEBUG=${DEBUG:-false}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health')"]
