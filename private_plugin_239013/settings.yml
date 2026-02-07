@@ -7,7 +7,7 @@ polling_verb: get
 polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.only_mine == "true" %}&user_id={{trmnl.user.id}}{%endif%}
 polling_headers: ''
 polling_body: ''
-id: 239013
+id: 240070
 custom_fields:
 - keyname: author_bio
   field_type: author_bio
@@ -23,5 +23,6 @@ custom_fields:
   field_type: boolean
   name: Show only my recipes
   default: false
+  optional: true
 name: Trending Recipes
 refresh_interval: 15

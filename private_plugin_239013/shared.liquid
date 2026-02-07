@@ -1,3 +1,20 @@
+<style>
+  .global-rank {
+    text-align: right;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+  }
+  
+  .icon {
+    display: inline-block;
+    vertical-align: middle;
+  }
+  
+</style>
+
+
 <div class="layout layout--stretch">
   <div class="columns" data-overflow-cols="2">
     <div class="column">
@@ -6,105 +23,114 @@
 
       {% comment %} Calculate popularity change {% endcomment %}
       {% assign delta = recipe.popularity_delta | default: 0 %}
-      {% assign is_positive = delta > 0 %}
-      {% assign is_negative = delta < 0 %}
-        {% assign delta_abs = delta | abs %}
-        {% assign growth_pct = recipe.popularity_growth_pct | default: 0 %}
+      {% assign delta_abs = delta | abs %}
+      {% assign total_popularity = recipe.popularity | default: 0 %}
 
-        {% comment %} Check if recipe is new (less than 7 days old) - FIXED {% endcomment %}
-        {% assign recipe_age_days = recipe.recipe_age_days %}
-        {% if recipe_age_days == nil or recipe_age_days == blank %}
-        {% assign is_new_recipe = false %}
-        {% assign show_age = false %}
+      {% comment %} Check if recipe is new (less than 7 days old) {% endcomment %}
+      {% assign recipe_age_days = recipe.recipe_age_days %}
+      {% if recipe_age_days == nil or recipe_age_days == blank %}
+      {% assign is_new_recipe = false %}
+      {% assign show_age = false %}
+      {% else %}
+      {% if recipe_age_days <= 7 %}
+        {% assign is_new_recipe = true %}
         {% else %}
-        {% if recipe_age_days <= 7 %}
-          {% assign is_new_recipe = true %}
+        {% assign is_new_recipe = false %}
+        {% endif %}
+        {% assign show_age = true %}
+        {% endif %}
+
+        {% comment %} Calculate rank change {% endcomment %}
+        {% assign rank_diff = recipe.rank_difference %}
+        {% assign current_rank = recipe.global_rank | default: 0 %}
+
+        <div class="item">
+          {% if recipe.icon_url %}
+          <img class="image w--8 h--8" src="{{recipe.icon_url}}" />
           {% else %}
-          {% assign is_new_recipe = false %}
-          {% endif %}
-          {% assign show_age = true %}
+          <span class="w--8 h--8"></span>
           {% endif %}
 
-          {% comment %} Format percentage {% endcomment %}
-          {% if growth_pct > 999 %}
-          {% assign growth_display = "999+" %}
-          {% elsif growth_pct < -999 %}
-            {% assign growth_display = "-999+" %}
-            {% else %}
-            {% assign growth_display = growth_pct | round: 1 %}
-            {% endif %}
+          <div class="content pl--1">
+            <div class="title title--small" title="{{ recipe.description | strip_html | truncate: 100 }}">
+              {{ recipe.name }}
 
-            <div class="item ">
-              {% if recipe.icon_url %}
-              <img class="image w--8 h--8" 
-                src="{{recipe.icon_url}}" />
-              {% else %}
-              <span class="w--8 h--8"></span>
+              {% comment %} NEW badge - Only show if actually new {% endcomment %}
+              {% if is_new_recipe %}
+              <span class="label label--inverted" title="Published {{ recipe_age_days | round: 1 }} days ago">
+                NEW
+              </span>
               {% endif %}
+            </div>
 
-              <div class="content pl--1">
-                <div class="title title--small" title="{{ recipe.description | strip_html | truncate: 100 }}">
-                  {{ recipe.name }}
+            <div class="description">
+              {% comment %} Popularity with server/rack icon {% endcomment %}
+              <span class="icon w--6 h--6">
+                <svg class="w--6 h--6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19.9998 10V7.2C19.9998 6.0799 19.9998 5.51984 19.806 5.09202C19.6355 4.71569 19.3636 4.40973 19.0291 4.21799C18.6488 4 18.151 4 17.1553 4H6.8442C5.84855 4 5.35073 4 4.97044 4.21799C4.63593 4.40973 4.36396 4.71569 4.19352 5.09202C3.99976 5.51984 3.99976 6.0799 3.99976 7.2V10M6.33887 14H6.34887M3.50977 20C3.9216 18.8348 5.03284 18 6.33906 18C7.64528 18 8.75652 18.8348 9.16835 20M11.9989 14H12.0089M9.1698 20C9.58164 18.8348 10.6929 18 11.9991 18C13.3053 18 14.4166 18.8348 14.8284 20M17.6588 14H17.6688M14.8297 20C15.2415 18.8348 16.3528 18 17.659 18C18.9652 18 20.0765 18.8348 20.4883 20M7.33887 14C7.33887 14.5523 6.89115 15 6.33887 15C5.78658 15 5.33887 14.5523 5.33887 14C5.33887 13.4477 5.78658 13 6.33887 13C6.89115 13 7.33887 13.4477 7.33887 14ZM12.9989 14C12.9989 14.5523 12.5512 15 11.9989 15C11.4466 15 10.9989 14.5523 10.9989 14C10.9989 13.4477 11.4466 13 11.9989 13C12.5512 13 12.9989 13.4477 12.9989 14ZM18.6588 14C18.6588 14.5523 18.2111 15 17.6588 15C17.1065 15 16.6588 14.5523 16.6588 14C16.6588 13.4477 17.1065 13 17.6588 13C18.2111 13 18.6588 13.4477 18.6588 14Z"/>
+                </svg>
+              </span>
+              
+              <span class="label" title="Total popularity (installs + forks)">
+                {{ total_popularity }}
+              </span>
+                            
+              {% if delta > 0 %}
+              <span class="label label--gray ml--0_5" title="Gained {{ delta_abs }} popularity">
+                (+{{ delta_abs }})
+              </span>
+              {% elsif delta < 0 %}
+                <span class="label label--gray ml--0_5" title="Lost {{ delta_abs }} popularity">
+                  ({{ delta }})
+                </span>
+                {% else %}
+                <span class="label label--gray ml--0_5" title="No popularity change">
+                  (±0)
+                </span>
+                {% endif %}
+                
+                <span class="label label--gray ml--0_5">·</span>
 
-                  {% comment %} NEW badge - Only show if actually new {% endcomment %}
-                  {% if is_new_recipe %}
-                  <span class="label label--inverted" title="Published {{ recipe_age_days | round: 1 }} days ago">
-                    NEW
-                  </span>
-                  {% endif %}
+                {% comment %} Global rank with trophy icon {% endcomment %}
+                <span class="icon w--6 h--6">
+                  <svg class="w--6 h--6" viewBox="0 0 512 512" fill="currentColor">
+                    <path d="M255 471L91.7 387V41h328.6v346zm-147.3-93.74L255 453l149.3-75.76V57H107.7v320.26zm187.61-168.34l-14.5-46 38.8-28.73-48.27-.43L256 87.94l-15.33 45.78-48.27.43 38.8 28.73-14.5 46 39.31-28zM254.13 311.5l98.27-49.89v-49.9l-98.14 49.82-94.66-48.69v50zm.13 32.66l-94.66-48.69v50l94.54 48.62 98.27-49.89v-49.9z"/>
+                  </svg>
+                </span>
+                
+                <span class="label ml--0_5" title="Global rank">
+                  {{ current_rank }}
+                </span>
+                
+{% if rank_diff != null %}
+  {% if rank_diff < 0 %}
+    {% assign rank_diff_abs = rank_diff | abs %}
+    <span class="label label--gray ml--0_5" title="Rank improved by {{ rank_diff_abs }} positions ({{ current_rank | plus: rank_diff_abs }} → {{ current_rank }})">
+      (▼{{ rank_diff_abs }})
+    </span>
+  {% elsif rank_diff > 0 %}
+    <span class="label label--gray ml--0_5" title="Rank dropped by {{ rank_diff }} positions ({{ current_rank | minus: rank_diff }} → {{ current_rank }})">
+      (▲ {{ rank_diff }})
+    </span>
+  {% endif %}
+{% endif %}
+              </div>
+              </div>
+              </div>
+                {% endfor %}
+              </div>
+              </div>
+              </div>
+                <div class="title_bar">
+                  <img class="image" src="https://trmnl.com/images/plugins/trmnl--render.svg">
+                  <div class="title">Trending Recipes
+                    {% if trmnl.plugin_settings.custom_fields_values.only_mine == "true" %}
+                    for {{trmnl.user.name}}
+                    {% endif %}
+                  </div>
+                  <div class="instance" title="Time period for trending calculation">
+                    {{ trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" | upcase }}
+                  </div>
                 </div>
 
-                <div class="description">
-                  {% comment %} Popularity change indicator {% endcomment %}
-                  {% if is_positive %}
-                  <span class="label label--positive" title="Gained {{ delta_abs }} popularity">
-                    ▲ {{ delta_abs }}
-                  </span>
-                  {% if growth_pct > 0 %}
-                  <span class="label label--positive ml--0_5" title="{{ growth_display }}% growth">
-                    (+{{ growth_display }}%)
-                  </span>
-                  {% endif %}
-                  {% elsif is_negative %}
-                  <span class="label label--negative" title="Lost {{ delta_abs }} popularity">
-                    ▼ {{ delta_abs }}
-                  </span>
-                  {% if growth_pct < 0 %}
-                    <span class="label label--negative ml--0_5" title="{{ growth_display }}% decline">
-                      ({{ growth_display }}%)
-                    </span>
-                    {% endif %}
-                    {% else %}
-                    <span class="label label--neutral" title="No change">
-                      ● 0
-                    </span>
-                    {% endif %}
-
-                    {% comment %} Total popularity {% endcomment %}
-                    <span class="label label--gray ml--0_5" title="Total popularity">
-                      ({{ recipe.popularity | default: 0 }})
-                    </span>
-
-                    {% comment %} Age indicator (for new recipes only) {% endcomment %}
-                    {% if show_age and is_new_recipe %}
-                    <span class="label label--age ml--0_5" title="Published {{ recipe_age_days | round: 1 }} days ago">
-                      {{ recipe_age_days | round: 0 }}d
-                    </span>
-                    {% endif %}
-                </div>
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          </div>
-          </div>
-
-            <div class="title_bar">
-              <img class="image" src="/images/plugins/trmnl--render.svg">
-              <div class="title">Trending Recipes</div>
-
-              <div class="instance" title="Time period for trending calculation">
-                {{ trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" | upcase }}
-              </div>
-            </div>
-<script />
+                <script />
