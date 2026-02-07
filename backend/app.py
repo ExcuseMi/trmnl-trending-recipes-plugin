@@ -313,12 +313,8 @@ def get_trending():
         recipe_ids = None
 
         if user_id:
-            stale = db.is_user_recipes_stale(user_id)
-            if stale:
-                recipe_ids = recipe_fetcher.fetch_user_recipe_ids(user_id)
-            else:
-                recipe_ids = db.get_user_recipe_ids(user_id)
-            logger.info(f"user_id={user_id} stale={stale} recipe_ids={recipe_ids}")
+            recipe_ids = db.get_recipe_ids_for_user(user_id)
+            logger.info(f"user_id={user_id} recipe_ids={recipe_ids}")
 
         trending_data = trending_calculator.calculate_trending(
             timeframe=timeframe,
@@ -332,7 +328,6 @@ def get_trending():
             trending_data['user_filter'] = {
                 'user_id': user_id,
                 'recipe_ids_count': len(recipe_ids) if recipe_ids else 0,
-                'cache_hit': not stale,
             }
 
         return jsonify(trending_data)

@@ -247,21 +247,6 @@ class Database:
             self._migrate_from_v2_to_v3()
             self._set_schema_version(3)
 
-        # user_recipes cache table (no migration needed)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_recipes (
-                user_id TEXT NOT NULL,
-                recipe_id TEXT NOT NULL,
-                fetched_at TEXT NOT NULL,
-                UNIQUE(user_id, recipe_id)
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_user_recipes_user
-            ON user_recipes(user_id)
-        """)
-        conn.commit()
-
         logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
@@ -274,11 +259,11 @@ class Database:
 
         cursor.execute("""
             INSERT INTO recipes (
-                id, name, description, installs, forks, 
-                popularity_score, url, icon_url, thumbnail_url, created_at, 
-                updated_at, last_fetched
+                id, name, description, installs, forks,
+                popularity_score, url, icon_url, thumbnail_url, created_at,
+                updated_at, last_fetched, user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -289,7 +274,8 @@ class Database:
                 icon_url = excluded.icon_url,
                 thumbnail_url = excluded.thumbnail_url,
                 updated_at = excluded.updated_at,
-                last_fetched = excluded.last_fetched
+                last_fetched = excluded.last_fetched,
+                user_id = excluded.user_id
         """, (
             recipe_data['id'],
             recipe_data.get('name'),
@@ -302,7 +288,8 @@ class Database:
             recipe_data.get('thumbnail_url'),
             recipe_data.get('created_at'),
             recipe_data.get('updated_at', now),
-            now
+            now,
+            recipe_data.get('user_id')
         ))
 
         conn.commit()
@@ -706,42 +693,12 @@ class Database:
 
         return results
 
-    def get_user_recipe_ids(self, user_id: str) -> List[str]:
-        """Return cached recipe IDs for a user"""
+    def get_recipe_ids_for_user(self, user_id: str) -> List[str]:
+        """Get recipe IDs for a user from the recipes table"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT recipe_id FROM user_recipes WHERE user_id = ?", (user_id,))
-        return [row['recipe_id'] for row in cursor.fetchall()]
-
-    def save_user_recipes(self, user_id: str, recipe_ids: List[str]):
-        """Replace all cached recipe IDs for a user"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        now = datetime.utcnow().isoformat()
-        cursor.execute("DELETE FROM user_recipes WHERE user_id = ?", (user_id,))
-        for rid in recipe_ids:
-            cursor.execute(
-                "INSERT OR IGNORE INTO user_recipes (user_id, recipe_id, fetched_at) VALUES (?, ?, ?)",
-                (user_id, rid, now)
-            )
-        conn.commit()
-
-    def is_user_recipes_stale(self, user_id: str, max_hours: int = 24) -> bool:
-        """Check if the user recipe cache needs a refresh"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT MIN(fetched_at) as oldest FROM user_recipes WHERE user_id = ?",
-            (user_id,)
-        )
-        row = cursor.fetchone()
-        if not row or not row['oldest']:
-            return True
-        try:
-            fetched = datetime.fromisoformat(row['oldest'])
-            return (datetime.utcnow() - fetched).total_seconds() / 3600 > max_hours
-        except Exception:
-            return True
+        cursor.execute("SELECT id FROM recipes WHERE user_id = ?", (user_id,))
+        return [row['id'] for row in cursor.fetchall()]
 
     def get_last_recipe_fetch_time(self) -> Optional[datetime]:
         """Get when recipes were last fetched"""

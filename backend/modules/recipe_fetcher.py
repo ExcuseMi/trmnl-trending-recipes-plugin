@@ -5,7 +5,7 @@ Handles paged API calls and data persistence
 
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict
 from datetime import datetime
 
 import httpx
@@ -26,7 +26,7 @@ class RecipeFetcher:
         try:
             response = await client.get(
                 self.base_url,
-                params={'page': page},
+                params={'page': page, 'per_page': 100},
                 timeout=self.timeout
             )
             response.raise_for_status()
@@ -35,7 +35,7 @@ class RecipeFetcher:
             logger.error(f"✗ Error fetching page {page}: {e}")
             raise
 
-    def parse_recipe(self, recipe_data: Dict, user_id: Optional[str] = None) -> Dict:
+    def parse_recipe(self, recipe_data: Dict) -> Dict:
         """Parse and normalize recipe data from API"""
         # Extract stats (installs and forks are in a 'stats' object)
         stats = recipe_data.get('stats', {})
@@ -48,8 +48,8 @@ class RecipeFetcher:
         if isinstance(author_bio, dict):
             description = author_bio.get('description', '')
 
-        # Try to get user_id from various sources
-        recipe_user_id = user_id or recipe_data.get('user_id') or recipe_data.get('author_id')
+        # user_id is now included directly in recipes.json
+        recipe_user_id = recipe_data.get('user_id') or recipe_data.get('author_id')
 
         result = {
             'id': str(recipe_data.get('id', '')),
@@ -68,42 +68,6 @@ class RecipeFetcher:
             result['user_id'] = str(recipe_user_id)
 
         return result
-
-
-    def fetch_user_recipe_ids(self, user_id: str) -> List[str]:
-        """Fetch recipe IDs belonging to a user from the TRMNL API (synchronous, paged)"""
-        logger.info(f"📥 Fetching recipes for user {user_id}...")
-        recipe_ids = []
-        page = 1
-
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                while True:
-                    response = client.get(
-                        self.base_url,
-                        params={'user_id': user_id, 'page': page}
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-
-                    recipes = data.get('data', [])
-                    if not recipes:
-                        break
-
-                    recipe_ids.extend(str(r['id']) for r in recipes if 'id' in r)
-
-                    if not data.get('next_page_url'):
-                        break
-
-                    page += 1
-
-            self.database.save_user_recipes(user_id, recipe_ids)
-            logger.info(f"✓ Cached {len(recipe_ids)} recipe IDs for user {user_id} ({page} page(s))")
-            return recipe_ids
-
-        except Exception as e:
-            logger.error(f"✗ Error fetching recipes for user {user_id}: {e}")
-            return self.database.get_user_recipe_ids(user_id)
 
     async def fetch_all_recipes(self) -> int:
         """
