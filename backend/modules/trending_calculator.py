@@ -71,7 +71,7 @@ class TrendingCalculator:
             )
 
         # Attach global trending rank when filtering by user
-        global_ranks = self._compute_global_ranks(timeframe, utc_offset_seconds)
+        global_ranks = self._compute_global_ranks()
         for recipe in trending_recipes:
             recipe['global_rank'] = global_ranks.get(recipe['id'])
 
@@ -271,29 +271,28 @@ class TrendingCalculator:
         except Exception as e:
             logger.error(f"Error calculating age for {published_at_str}: {e}")
             return 0.0
-    def _compute_global_ranks(self, timeframe: str, utc_offset_seconds: int) -> Dict[str, int]:
-        """Compute global trending rank for all recipes (lightweight, no per-recipe DB calls)"""
-        timeframe_info = self.TIMEFRAMES[timeframe]
 
-        if timeframe_info['type'] == 'calendar':
-            if timeframe == 'today':
-                cutoff = self._get_local_midnight(utc_offset_seconds)
-            else:
-                cutoff = self._get_week_start(utc_offset_seconds)
-            all_recipes = self.database.get_recipes_with_delta_since(cutoff)
-        else:
-            all_recipes = self.database.get_recipes_with_delta_since_hours(timeframe_info['hours'])
+    def _compute_global_ranks(self) -> Dict[str, int]:
+        """Compute global ranks for all recipes based on total popularity"""
+        # Get all recipes with their current popularity
+        conn = self.get_connection()
+        cursor = conn.cursor()
 
-        # Compute deltas and sort
-        scored = []
-        for r in all_recipes:
-            delta = r['current_popularity'] - r.get('past_popularity', 0)
-            has_history = r.get('has_history', False)
-            if has_history and delta > 0:
-                scored.append((r['id'], delta))
+        cursor.execute("""
+            SELECT 
+                id,
+                popularity_score
+            FROM recipes
+            WHERE popularity_score > 0
+            ORDER BY popularity_score DESC
+        """)
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return {rid: rank + 1 for rank, (rid, _) in enumerate(scored)}
+        # Assign ranks starting from 1 for recipes with popularity > 0
+        ranks = {}
+        for rank, row in enumerate(cursor.fetchall()):
+            ranks[row['id']] = rank + 1
+
+        return ranks
 
     def _get_local_midnight(self, utc_offset_seconds: int) -> datetime:
         """Get the most recent local midnight in UTC"""
