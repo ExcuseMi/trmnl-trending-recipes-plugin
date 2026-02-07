@@ -389,7 +389,9 @@ class Database:
 
         params: list = [cutoff_iso]
 
-        if recipe_ids:
+        if recipe_ids is not None:
+            if not recipe_ids:
+                return []
             placeholders = ','.join('?' * len(recipe_ids))
             query += f" WHERE r.id IN ({placeholders})"
             params.extend(recipe_ids)
@@ -678,7 +680,9 @@ class Database:
 
         params: list = [cutoff_iso]
 
-        if recipe_ids:
+        if recipe_ids is not None:
+            if not recipe_ids:
+                return []
             placeholders = ','.join('?' * len(recipe_ids))
             query += f" WHERE r.id IN ({placeholders})"
             params.extend(recipe_ids)
