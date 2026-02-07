@@ -524,8 +524,6 @@ class Database:
         cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
-        logger.debug(f"get_recipe_delta_since_hours: recipe={recipe_id}, hours_ago={hours_ago}, cutoff={cutoff_iso}")
-
         # Get current stats
         cursor.execute("""
             SELECT 
@@ -617,8 +615,6 @@ class Database:
         cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
-        logger.debug(f"get_recipes_with_delta_since_hours: hours_ago={hours_ago}, cutoff={cutoff_iso}")
-
         # Build query with optional user filter
         query = """
             SELECT 
@@ -677,12 +673,6 @@ class Database:
             row_dict['past_popularity'] = int(row_dict['past_popularity'] or 0)
             row_dict['has_history'] = bool(row_dict['has_history'])
             results.append(row_dict)
-
-        with_history = sum(1 for r in results if r['has_history'])
-        logger.debug(
-            f"get_recipes_with_delta_since_hours: {len(results)} recipes, "
-            f"{with_history} with hourly snapshot before cutoff"
-        )
 
         return results
 

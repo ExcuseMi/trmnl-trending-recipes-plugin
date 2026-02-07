@@ -114,9 +114,25 @@ class TrendingCalculator:
         # Get recipes with delta since cutoff using hourly snapshots
         recipes = self.database.get_recipes_with_delta_since_hours(hours, user_id)
 
-        with_history = sum(1 for r in recipes if r.get('has_history'))
-        with_delta = sum(1 for r in recipes if r.get('current_popularity', 0) - r.get('past_popularity', 0) > 0)
-        logger.debug(f"Rolling {timeframe}: {len(recipes)} recipes, {with_history} with history, {with_delta} with positive delta")
+        # Log a one-line summary with the actual snapshot age range
+        snapshot_ages = []
+        now = datetime.utcnow()
+        for r in recipes:
+            ts = r.get('past_snapshot_timestamp')
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts.replace('Z', ''))
+                    snapshot_ages.append((now - dt).total_seconds() / 3600)
+                except Exception:
+                    pass
+        if snapshot_ages:
+            logger.debug(
+                f"Rolling {timeframe} ({hours}h): {len(recipes)} recipes, "
+                f"{len(snapshot_ages)}/{len(recipes)} with snapshots, "
+                f"snapshot age range: {min(snapshot_ages):.1f}h - {max(snapshot_ages):.1f}h"
+            )
+        else:
+            logger.debug(f"Rolling {timeframe} ({hours}h): {len(recipes)} recipes, no snapshot data")
 
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds)
 
@@ -326,18 +342,6 @@ class TrendingCalculator:
             delta_data = self.database.get_recipe_delta_since_hours(recipe_id, hours)
 
             if delta_data:
-                past_ts = delta_data.get('past_snapshot_timestamp')
-                if past_ts:
-                    try:
-                        past_dt = datetime.fromisoformat(past_ts.replace('Z', ''))
-                        actual_hours = (datetime.utcnow() - past_dt).total_seconds() / 3600
-                        logger.debug(
-                            f"Recipe {recipe_id} ({hours}h window): "
-                            f"snapshot from {actual_hours:.1f}h ago, "
-                            f"delta={delta_data.get('delta_popularity', 0)}"
-                        )
-                    except Exception:
-                        pass
                 return {
                     'installs': delta_data.get('delta_installs', 0),
                     'forks': delta_data.get('delta_forks', 0),
