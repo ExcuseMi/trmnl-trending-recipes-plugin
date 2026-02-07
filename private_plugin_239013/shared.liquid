@@ -34,12 +34,10 @@
             {% assign growth_display = growth_pct | round: 1 %}
             {% endif %}
 
-            <div class="item {% if forloop.index == 1 %}outline{% endif %}">
+            <div class="item ">
               {% if recipe.icon_url %}
               <img class="image w--8 h--8" 
-                src="{{recipe.icon_url}}" 
-                alt="{{ recipe.name }} icon"
-                onerror="this.style.display='none'; this.parentNode.innerHTML='<span class=\'w--8 h--8\'></span>';" />
+                src="{{recipe.icon_url}}" />
               {% else %}
               <span class="w--8 h--8"></span>
               {% endif %}
@@ -109,3 +107,4 @@
                 {{ trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" | upcase }}
               </div>
             </div>
+<script />

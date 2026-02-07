@@ -4,7 +4,7 @@ no_screen_padding: 'no'
 dark_mode: 'no'
 static_data: ''
 polling_verb: get
-polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}
+polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.only_mine == "true" %}&user_id={{trmnl.user.id}}{%endif%}
 polling_headers: ''
 polling_body: ''
 id: 239013
@@ -19,5 +19,9 @@ custom_fields:
   options:
   - Today: today
   - 24h: 24h
+- keyname: only_mine
+  field_type: boolean
+  name: Show only my recipes
+  default: false
 name: Trending Recipes
-refresh_interval: 60
+refresh_interval: 15
