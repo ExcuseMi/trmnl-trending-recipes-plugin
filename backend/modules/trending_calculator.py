@@ -70,6 +70,12 @@ class TrendingCalculator:
                 recipe_ids=recipe_ids, include_all=include_all
             )
 
+        # Attach global trending rank when filtering by user
+        if recipe_ids is not None:
+            global_ranks = self._compute_global_ranks(timeframe, utc_offset_seconds)
+            for recipe in trending_recipes:
+                recipe['global_rank'] = global_ranks.get(recipe['id'])
+
         # Build comprehensive response
         response = {
             'timeframe': timeframe,
@@ -211,7 +217,7 @@ class TrendingCalculator:
 
         # Sort by popularity when showing all, otherwise by trending score
         if include_all:
-            trending_recipes.sort(key=lambda x: x['popularity'], reverse=True)
+            trending_recipes.sort(key=lambda x: (x['popularity_delta'], x['popularity']), reverse=True)
         else:
             trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
@@ -266,6 +272,30 @@ class TrendingCalculator:
         except Exception as e:
             logger.error(f"Error calculating age for {published_at_str}: {e}")
             return 0.0
+    def _compute_global_ranks(self, timeframe: str, utc_offset_seconds: int) -> Dict[str, int]:
+        """Compute global trending rank for all recipes (lightweight, no per-recipe DB calls)"""
+        timeframe_info = self.TIMEFRAMES[timeframe]
+
+        if timeframe_info['type'] == 'calendar':
+            if timeframe == 'today':
+                cutoff = self._get_local_midnight(utc_offset_seconds)
+            else:
+                cutoff = self._get_week_start(utc_offset_seconds)
+            all_recipes = self.database.get_recipes_with_delta_since(cutoff)
+        else:
+            all_recipes = self.database.get_recipes_with_delta_since_hours(timeframe_info['hours'])
+
+        # Compute deltas and sort
+        scored = []
+        for r in all_recipes:
+            delta = r['current_popularity'] - r.get('past_popularity', 0)
+            has_history = r.get('has_history', False)
+            if has_history and delta > 0:
+                scored.append((r['id'], delta))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return {rid: rank + 1 for rank, (rid, _) in enumerate(scored)}
+
     def _get_local_midnight(self, utc_offset_seconds: int) -> datetime:
         """Get the most recent local midnight in UTC"""
         now_utc = datetime.utcnow()
