@@ -769,7 +769,7 @@ class Database:
 
         hours_since = (datetime.utcnow() - last_fetch).total_seconds() / 3600
         return hours_since > max_hours
-    def compute_global_ranks(self, timeframe: str, utc_offset_seconds: int) -> Dict[str, Dict[str, int]]:
+    def compute_global_ranks(self, timeframe: str, cutoff: datetime) -> Dict[str, Dict[str, int]]:
         """Compute current global rank and rank improvement"""
         # Get current rankings
         conn = self.get_connection()
@@ -785,15 +785,6 @@ class Database:
         current_recipes = cursor.fetchall()
         current_ranks = {row['id']: rank + 1 for rank, row in enumerate(current_recipes)}
 
-        # Get timeframe cutoff
-        timeframe_info = self.TIMEFRAMES[timeframe]
-        if timeframe_info['type'] == 'calendar':
-            if timeframe == 'today':
-                cutoff = self._get_local_midnight(utc_offset_seconds)
-            else:
-                cutoff = self._get_week_start(utc_offset_seconds)
-        else:
-            cutoff = datetime.utcnow() - timedelta(hours=timeframe_info['hours'])
 
         # Get popularity at cutoff time
         cutoff_iso = cutoff.isoformat()

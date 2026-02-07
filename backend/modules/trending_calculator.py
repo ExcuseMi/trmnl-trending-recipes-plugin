@@ -71,7 +71,17 @@ class TrendingCalculator:
             )
 
         # Attach global trending rank when filtering by user
-        global_ranks = self.database.compute_global_ranks(timeframe, utc_offset_seconds)
+        # Get timeframe cutoff
+        timeframe_info = self.TIMEFRAMES[timeframe]
+        if timeframe_info['type'] == 'calendar':
+            if timeframe == 'today':
+                cutoff = self._get_local_midnight(utc_offset_seconds)
+            else:
+                cutoff = self._get_week_start(utc_offset_seconds)
+        else:
+            cutoff = datetime.utcnow() - timedelta(hours=timeframe_info['hours'])
+
+        global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
         for recipe in trending_recipes:
             ranks = global_ranks.get(recipe['id'])
             recipe['global_rank'] = ranks['global_rank']
