@@ -293,6 +293,7 @@ def get_trending():
                  or legacy: 1d, 1w, 1m, 6m
     - limit: number of results (default: 10)
     - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
+    - user_id: filter to only this user's recipes (fetched + cached on first call)
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
