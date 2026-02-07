@@ -254,118 +254,33 @@ class TrendingCalculator:
     def _calculate_trending_score_for_period(self, recipe: Dict, timeframe: str,
                                              utc_offset_seconds: int = 0,
                                              cutoff_iso: str = None) -> float:
-        """
-        Calculate trending score with improved "today" handling
-        """
+        """Calculate trending score normalized to per-day growth rate"""
         try:
             has_history = recipe.get('has_historical_data', False)
             popularity_delta = recipe.get('popularity_delta', 0) or 0
 
-            # For "today" trending with hourly updates:
-            if timeframe == 'today':
-                # Get the most recent snapshot timestamp
-                conn = self.database.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT MAX(snapshot_timestamp) as latest_snapshot
-                    FROM recipe_history 
-                    WHERE recipe_id = ?
-                """, (recipe['id'],))
+            if not has_history or popularity_delta <= 0:
+                return 0.0
 
-                row = cursor.fetchone()
-                latest_snapshot = row['latest_snapshot'] if row else None
-
-                if latest_snapshot:
-                    # Calculate how many hours since last snapshot
-                    try:
-                        latest_dt = datetime.fromisoformat(latest_snapshot.replace('Z', ''))
-                        hours_since_snapshot = (datetime.utcnow() - latest_dt).total_seconds() / 3600
-
-                        # If snapshot is very recent (< 2 hours), use it
-                        if hours_since_snapshot < 2 and popularity_delta > 0:
-                            # Normalize to hourly rate
-                            return float(popularity_delta) / max(0.1, hours_since_snapshot / 24)
-                    except Exception:
-                        pass
-
-                # Fallback to normal calculation
-                if has_history and popularity_delta > 0:
-                    if cutoff_iso:
-                        try:
-                            hours_passed = (datetime.utcnow() - datetime.fromisoformat(
-                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
-                            days = max(0.1, hours_passed / 24)
-                        except Exception:
-                            days = 1.0
-                    else:
-                        days = 1.0
-                    return float(popularity_delta) / days
-
-            # Normal calculation for other timeframes
-            if has_history and popularity_delta > 0:
-                if timeframe == 'today':
-                    if cutoff_iso:
-                        try:
-                            hours_passed = (datetime.utcnow() - datetime.fromisoformat(
-                                cutoff_iso.replace('Z', ''))).total_seconds() / 3600
-                            days = max(0.1, hours_passed / 24)
-                        except Exception:
-                            days = 1.0
-                    else:
-                        days = 1.0
-                    return float(popularity_delta) / days
-                else:
-                    timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                    hours = timeframe_info.get('hours', 24)
-                    days = max(0.1, hours / 24)
-                    return float(popularity_delta) / days
-
-            return 0.0
-
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            return 0.0
-    def _calculate_conservative_score(self, has_history: bool, popularity_delta: int,
-                                      timeframe: str, cutoff_iso: str = None) -> float:
-        """
-        Conservative score calculation when we have limited information
-        """
-        if popularity_delta <= 0:
-            return 0.0
-
-        if has_history:
-            # We have historical data
-            if timeframe == 'today':
-                if cutoff_iso:
-                    try:
-                        hours_passed = (datetime.utcnow() - datetime.fromisoformat(
-                            cutoff_iso.replace('Z', ''))).total_seconds() / 3600
-                        days = max(0.1, hours_passed / 24)
-                    except Exception:
-                        days = 1.0
-                else:
+            # For calendar timeframes, use actual elapsed time
+            if timeframe in ('today', 'week') and cutoff_iso:
+                try:
+                    hours_passed = (datetime.utcnow() - datetime.fromisoformat(
+                        cutoff_iso.replace('Z', ''))).total_seconds() / 3600
+                    days = max(0.1, hours_passed / 24)
+                except Exception:
                     days = 1.0
                 return float(popularity_delta) / days
-            else:
-                timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                hours = timeframe_info.get('hours', 24)
-                days = max(0.1, hours / 24)
-                return float(popularity_delta) / days
-        else:
-            # No historical data - heavily penalize
-            if timeframe == 'today':
-                # Assume growth happened over at least 12 hours
-                return float(popularity_delta) / 0.5
-            elif timeframe == 'week':
-                # Assume growth happened over at least 3.5 days
-                return float(popularity_delta) / 3.5
-            else:
-                # For rolling windows, assume half the period
-                timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
-                hours = timeframe_info.get('hours', 24)
-                days = max(1.0, hours / 48)  # Half the period
-                return float(popularity_delta) / days
 
+            # For rolling windows, normalize by the window size
+            timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
+            hours = timeframe_info.get('hours', 24)
+            days = max(0.1, hours / 24)
+            return float(popularity_delta) / days
+
+        except Exception as e:
+            logger.error(f"Error calculating trending score: {e}")
+            return 0.0
     def _get_delta_for_timeframe(self, recipe_id: str, timeframe: str, utc_offset_seconds: int = 0) -> Dict:
         """Get delta for a specific timeframe"""
         try:
@@ -400,11 +315,11 @@ class TrendingCalculator:
             return self._get_empty_delta(timeframe, datetime.utcnow() - timedelta(hours=24))
 
     def _get_delta_for_rolling(self, recipe_id: str, hours: int) -> Dict:
-        """Get delta for a rolling timeframe"""
+        """Get delta for a rolling timeframe using hourly snapshots"""
         try:
             cutoff = datetime.utcnow() - timedelta(hours=hours)
 
-            delta_data = self.database.get_recipe_delta_since(recipe_id, cutoff)
+            delta_data = self.database.get_recipe_delta_since_hours(recipe_id, hours)
 
             if delta_data:
                 return {
@@ -481,32 +396,3 @@ class TrendingCalculator:
 
         return info
 
-    def get_all_timeframes_trending(self, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
-        """Get trending recipes for all timeframes"""
-        results = {}
-
-        for timeframe in ['today', 'week', '24h', '7d', '30d']:
-            try:
-                results[timeframe] = self.calculate_trending(timeframe, limit, utc_offset_seconds)
-            except Exception as e:
-                logger.error(f"✗ Error calculating trending for {timeframe}: {e}")
-                results[timeframe] = {
-                    'error': str(e),
-                    'timeframe': timeframe
-                }
-
-        return results
-
-    # Backward compatibility aliases
-    def calculate_trending_with_offset(self, duration: str, limit: int = 10, utc_offset_seconds: int = 0) -> Dict:
-        """Alias for backward compatibility"""
-        # Map old duration names to new ones
-        duration_map = {
-            '1d': '24h',
-            '1w': '7d',
-            '1m': '30d',
-            '6m': '180d'
-        }
-
-        timeframe = duration_map.get(duration, duration)
-        return self.calculate_trending(timeframe, limit, utc_offset_seconds)

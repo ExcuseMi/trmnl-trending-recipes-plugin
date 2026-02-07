@@ -3,7 +3,6 @@ Gunicorn configuration file for TRMNL Trending Recipes
 """
 
 import os
-import multiprocessing
 
 # Server Socket
 bind = "0.0.0.0:5000"

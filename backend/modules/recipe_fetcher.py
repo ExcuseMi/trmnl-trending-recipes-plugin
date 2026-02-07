@@ -5,7 +5,7 @@ Handles paged API calls and data persistence
 
 import asyncio
 import logging
-from typing import Dict, List, Optional  # ADD THIS IMPORT
+from typing import Dict, List, Optional
 from datetime import datetime
 
 import httpx
@@ -156,20 +156,4 @@ class RecipeFetcher:
 
         return recipes_processed
 
-    async def fetch_recipe_by_id(self, recipe_id: str) -> Dict:
-        """Fetch a specific recipe by ID"""
-        # Note: This assumes the API supports filtering by ID
-        # Adjust based on actual API capabilities
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.base_url}/{recipe_id}",
-                    timeout=self.timeout
-                )
-                response.raise_for_status()
-                recipe_data = response.json()
-                return self.parse_recipe(recipe_data)
-            except Exception as e:
-                logger.error(f"✗ Error fetching recipe {recipe_id}: {e}")
-                raise
 

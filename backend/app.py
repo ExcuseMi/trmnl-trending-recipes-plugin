@@ -39,7 +39,6 @@ IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
 TRMNL_IPS_API = 'https://trmnl.com/api/ips'
 LOCALHOST_IPS = ['127.0.0.1', '::1', 'localhost']
 DATABASE_PATH = os.getenv('DATABASE_PATH', '/data/recipes.db')
-FETCH_INTERVAL_HOURS = int(os.getenv('FETCH_INTERVAL_HOURS', '24'))
 WORKER_LOCK_FILE = os.getenv('WORKER_LOCK_FILE', '/tmp/trmnl-primary-worker.lock')
 
 # Global IP whitelist state
@@ -230,7 +229,7 @@ def start_recipe_fetch_worker():
         name='Recipe-Fetch-Worker'
     )
     worker_thread.start()
-    logger.info(f"✓ Recipe fetch worker started (every {FETCH_INTERVAL_HOURS}h, aligned to hour)")
+    logger.info("✓ Recipe fetch worker started (hourly, aligned to hour)")
 
 
 # ============================================================================
@@ -289,16 +288,13 @@ def get_trending():
     Get trending recipes with clear timeframe options
 
     Query parameters:
-    - timeframe: today, week, 24h, 7d, 30d, 180d (default: 24h)
+    - timeframe: today, week, 1h, 24h, 7d, 30d, 180d (default: 24h)
                  or legacy: 1d, 1w, 1m, 6m
     - limit: number of results (default: 10)
     - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
-    - user_id: Optional user ID to filter recipes by user
-    - refresh: Force refresh user recipes (default: false)
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
     limit = int(request.args.get('limit', '10'))
-    force_refresh = request.args.get('refresh', 'false').lower() == 'true'
 
     # Get UTC offset
     try:
