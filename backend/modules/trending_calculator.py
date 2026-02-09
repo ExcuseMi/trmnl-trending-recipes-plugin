@@ -24,6 +24,7 @@ class TrendingCalculator:
 
         # Rolling windows
         '24h': {'type': 'rolling', 'hours': 24, 'description': 'Last 24 hours'},
+        '3d': {'type': 'rolling', 'hours': 72, 'description': 'Last 3 days'},
         '7d': {'type': 'rolling', 'hours': 168, 'description': 'Last 7 days'},
         '30d': {'type': 'rolling', 'hours': 720, 'description': 'Last 30 days'},
         '180d': {'type': 'rolling', 'hours': 4320, 'description': 'Last 180 days'},
@@ -39,17 +40,23 @@ class TrendingCalculator:
 
     def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
                            recipe_ids: Optional[List[str]] = None,
-                           include_all: bool = False) -> Dict:
+                           include_all: bool = False,
+                           user_recipe_ids: Optional[List[str]] = None,
+                           include_unchanged: bool = False,
+                           categories_filter: Optional[List[str]] = None) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
         Args:
-            timeframe: One of '1h', 'today', 'week', '24h', '7d', '30d', '180d'
+            timeframe: One of '1h', 'today', 'week', '24h', '3d', '7d', '30d', '180d'
                       or legacy '1d', '1w', '1m', '6m'
             limit: Maximum number of results to return
             utc_offset_seconds: UTC offset in seconds for calendar calculations
-            recipe_ids: Optional list of recipe IDs to restrict results to
+            recipe_ids: Optional list of recipe IDs to restrict results to (single-list mode)
             include_all: If True, include all recipes (not just trending), sorted by popularity
+            user_recipe_ids: Optional list of user's recipe IDs (enables dual-list mode)
+            include_unchanged: If True, include user recipes with 0 popularity_delta
+            categories_filter: Optional list of categories to filter by
 
         Returns:
             Dict with timeframe info and trending recipes
@@ -59,19 +66,7 @@ class TrendingCalculator:
 
         timeframe_info = self.TIMEFRAMES[timeframe]
 
-        if timeframe_info['type'] == 'calendar':
-            trending_recipes = self._calculate_calendar_trending(
-                timeframe, limit, utc_offset_seconds, recipe_ids=recipe_ids,
-                include_all=include_all
-            )
-        else:
-            trending_recipes = self._calculate_rolling_trending(
-                timeframe, timeframe_info['hours'], limit, utc_offset_seconds,
-                recipe_ids=recipe_ids, include_all=include_all
-            )
-
         # Get timeframe cutoff
-        timeframe_info = self.TIMEFRAMES[timeframe]
         if timeframe_info['type'] == 'calendar':
             if timeframe == 'today':
                 cutoff = self._get_local_midnight(utc_offset_seconds)
@@ -80,17 +75,46 @@ class TrendingCalculator:
         else:
             cutoff = datetime.utcnow() - timedelta(hours=timeframe_info['hours'])
 
+        # Dual-list mode: user_recipe_ids provided
+        if user_recipe_ids is not None:
+            return self._calculate_dual_list(
+                timeframe, timeframe_info, limit, utc_offset_seconds, cutoff,
+                user_recipe_ids, include_unchanged, categories_filter
+            )
+
+        # Single-list mode (original behavior)
+        if timeframe_info['type'] == 'calendar':
+            trending_recipes = self._calculate_calendar_trending(
+                timeframe, None, utc_offset_seconds, recipe_ids=recipe_ids,
+                include_all=include_all
+            )
+        else:
+            trending_recipes = self._calculate_rolling_trending(
+                timeframe, timeframe_info['hours'], None, utc_offset_seconds,
+                recipe_ids=recipe_ids, include_all=include_all
+            )
+
         global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
         for recipe in trending_recipes:
             ranks = global_ranks.get(recipe['id'])
-            recipe['global_rank'] = ranks['global_rank']
-            recipe['rank_difference'] = ranks['rank_difference']
+            if ranks:
+                recipe['global_rank'] = ranks['global_rank']
+                recipe['rank_difference'] = ranks['rank_difference']
 
-        # Build comprehensive response
+        # Apply category filter
+        if categories_filter:
+            trending_recipes = [
+                r for r in trending_recipes
+                if any(c in categories_filter for c in r.get('categories', []))
+            ]
+
+        # Apply limit
+        trending_recipes = trending_recipes[:limit]
+
+        # Build response
         response = {
             'timeframe': timeframe,
             'type': timeframe_info['type'],
-            'description': timeframe_info['description'],
             'utc_offset_seconds': utc_offset_seconds,
             'count': len(trending_recipes),
             'recipes': trending_recipes,
@@ -99,7 +123,81 @@ class TrendingCalculator:
 
         return response
 
-    def _calculate_calendar_trending(self, timeframe: str, limit: int,
+    def _calculate_dual_list(self, timeframe: str, timeframe_info: Dict, limit: int,
+                             utc_offset_seconds: int, cutoff: datetime,
+                             user_recipe_ids: List[str],
+                             include_unchanged: bool,
+                             categories_filter: Optional[List[str]]) -> Dict:
+        """Calculate trending with dual-list mode: user_recipes + global recipes"""
+
+        # Fetch ALL recipes (no filter)
+        if timeframe_info['type'] == 'calendar':
+            all_recipes = self._calculate_calendar_trending(
+                timeframe, None, utc_offset_seconds, recipe_ids=None, include_all=True
+            )
+        else:
+            all_recipes = self._calculate_rolling_trending(
+                timeframe, timeframe_info['hours'], None, utc_offset_seconds,
+                recipe_ids=None, include_all=True
+            )
+
+        # Compute global ranks for all
+        global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
+        for recipe in all_recipes:
+            ranks = global_ranks.get(recipe['id'])
+            if ranks:
+                recipe['global_rank'] = ranks['global_rank']
+                recipe['rank_difference'] = ranks['rank_difference']
+
+        # Apply category filter to full set
+        if categories_filter:
+            all_recipes = [
+                r for r in all_recipes
+                if any(c in categories_filter for c in r.get('categories', []))
+            ]
+
+        # Partition into user_recipes and global_recipes
+        user_id_set = set(user_recipe_ids)
+        user_recipes_all = [r for r in all_recipes if r['id'] in user_id_set]
+        global_recipes = [r for r in all_recipes if r['id'] not in user_id_set]
+
+        # Compute user_stats from ALL user recipes (before filtering)
+        user_stats = {
+            'total_popularity': sum(r['popularity'] for r in user_recipes_all),
+            'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
+        }
+
+        # Filter user_recipes: exclude popularity_delta == 0 unless include_unchanged
+        if not include_unchanged:
+            user_recipes_filtered = [r for r in user_recipes_all if r['popularity_delta'] != 0]
+        else:
+            user_recipes_filtered = list(user_recipes_all)
+
+        # Sort: user_recipes by popularity_delta DESC, global by trending_score DESC
+        user_recipes_filtered.sort(key=lambda x: x['popularity_delta'], reverse=True)
+        global_recipes = [r for r in global_recipes if r['trending_score'] > 0]
+        global_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
+
+        # Apply limit: user_recipes first, fill remaining with global_recipes
+        final_user = user_recipes_filtered[:limit]
+        remaining = max(0, limit - len(final_user))
+        final_global = global_recipes[:remaining]
+
+        # Build response
+        response = {
+            'timeframe': timeframe,
+            'type': timeframe_info['type'],
+            'utc_offset_seconds': utc_offset_seconds,
+            'count': len(final_user) + len(final_global),
+            'user_recipes': final_user,
+            'recipes': final_global,
+            'user_stats': user_stats,
+            'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
+        }
+
+        return response
+
+    def _calculate_calendar_trending(self, timeframe: str, limit: Optional[int],
                                      utc_offset_seconds: int,
                                      recipe_ids: Optional[List[str]] = None,
                                      include_all: bool = False) -> List[Dict]:
@@ -128,7 +226,7 @@ class TrendingCalculator:
                                               cutoff_iso=cutoff.isoformat(),
                                               include_all=include_all)
 
-    def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: int,
+    def _calculate_rolling_trending(self, timeframe: str, hours: int, limit: Optional[int],
                                     utc_offset_seconds: int,
                                     recipe_ids: Optional[List[str]] = None,
                                     include_all: bool = False) -> List[Dict]:
@@ -162,7 +260,7 @@ class TrendingCalculator:
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
                                               include_all=include_all)
 
-    def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: int,
+    def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: Optional[int],
                                   utc_offset_seconds: int = 0, cutoff_iso: str = None,
                                   include_all: bool = False) -> List[Dict]:
         """Process recipes into trending format"""
@@ -206,10 +304,14 @@ class TrendingCalculator:
                     recipe['id'], timeframe_info.get('hours', 24)
                 )
 
+            # Parse categories into array
+            categories_raw = recipe.get('categories') or ''
+            categories_list = [c.strip() for c in categories_raw.split(',') if c.strip()]
+
             trending_recipes.append({
                 'id': recipe['id'],
                 'name': recipe['name'],
-                'description': recipe['description'],
+                'categories': categories_list,
                 'url': recipe['url'],
                 'icon_url': recipe['icon_url'],
                 'thumbnail_url': recipe['thumbnail_url'],
@@ -231,8 +333,10 @@ class TrendingCalculator:
         else:
             trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
-        # Apply limit
-        return trending_recipes[:limit]
+        # Apply limit (None means no limit, for dual-list code path)
+        if limit is not None:
+            return trending_recipes[:limit]
+        return trending_recipes
 
     def _calculate_recipe_age_days(self, published_at_str: str) -> float:
         """Calculate how many days old a recipe is"""

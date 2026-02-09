@@ -42,11 +42,13 @@ class RecipeFetcher:
         installs = int(stats.get('installs', 0))
         forks = int(stats.get('forks', 0))
 
-        # Extract description from author_bio
+        # Extract description and categories from author_bio
         description = ''
+        categories = ''
         author_bio = recipe_data.get('author_bio', {})
         if isinstance(author_bio, dict):
             description = author_bio.get('description', '')
+            categories = author_bio.get('category', '')
 
         # user_id is now included directly in recipes.json
         recipe_user_id = recipe_data.get('user_id') or recipe_data.get('author_id')
@@ -55,6 +57,7 @@ class RecipeFetcher:
             'id': str(recipe_data.get('id', '')),
             'name': recipe_data.get('name', 'Untitled'),
             'description': description,
+            'categories': categories,
             'installs': installs,
             'forks': forks,
             'url': f"https://trmnl.com/recipes/{recipe_data.get('id', '')}",

@@ -297,7 +297,7 @@ def get_trending():
     - user_id: filter to only this user's recipes (fetched + cached on first call)
     """
     timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
-    limit = int(request.args.get('limit', '10'))
+    limit = min(int(request.args.get('limit', '10')), 50)
 
     # Get UTC offset
     try:
@@ -308,28 +308,41 @@ def get_trending():
             'message': 'UTC offset must be an integer number of seconds'
         }), 400
 
+    # Parse include_unchanged (boolean, default false)
+    include_unchanged = request.args.get('include_unchanged', 'false').lower() in ('true', '1', 'yes')
+
+    # Parse categories filter (comma-separated string)
+    categories_param = request.args.get('categories', '').strip()
+    categories_filter = [c.strip() for c in categories_param.split(',') if c.strip()] if categories_param else None
+
     try:
         # Resolve user_id to recipe_ids if requested
         user_id = request.args.get('user_id')
-        recipe_ids = None
 
         if user_id:
-            recipe_ids = db.get_recipe_ids_for_user(user_id)
-            logger.info(f"user_id={user_id} recipe_ids={recipe_ids}")
+            user_recipe_ids = db.get_recipe_ids_for_user(user_id)
+            logger.info(f"user_id={user_id} user_recipe_ids={user_recipe_ids}")
 
-        trending_data = trending_calculator.calculate_trending(
-            timeframe=timeframe,
-            limit=limit,
-            utc_offset_seconds=utc_offset,
-            recipe_ids=recipe_ids,
-            include_all=recipe_ids is not None
-        )
+            trending_data = trending_calculator.calculate_trending(
+                timeframe=timeframe,
+                limit=limit,
+                utc_offset_seconds=utc_offset,
+                user_recipe_ids=user_recipe_ids,
+                include_unchanged=include_unchanged,
+                categories_filter=categories_filter,
+            )
 
-        if user_id:
             trending_data['user_filter'] = {
                 'user_id': user_id,
-                'recipe_ids_count': len(recipe_ids) if recipe_ids else 0,
+                'recipe_ids_count': len(user_recipe_ids),
             }
+        else:
+            trending_data = trending_calculator.calculate_trending(
+                timeframe=timeframe,
+                limit=limit,
+                utc_offset_seconds=utc_offset,
+                categories_filter=categories_filter,
+            )
 
         return jsonify(trending_data)
 

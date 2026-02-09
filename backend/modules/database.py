@@ -17,7 +17,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.schema_version = 3  # Current schema version
+        self.schema_version = 4  # Current schema version
 
     def get_connection(self) -> sqlite3.Connection:
         """Get or create database connection"""
@@ -166,6 +166,29 @@ class Database:
             conn.rollback()
             logger.error(f"✗ Schema migration failed: {e}")
             raise
+    def _migrate_from_v3_to_v4(self):
+        """Migrate database from schema version 3 to 4 - add categories column"""
+        logger.info("🔧 Migrating database schema from v3 to v4...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("PRAGMA table_info(recipes)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'categories' not in columns:
+                logger.info("  ✓ Adding categories column to recipes table...")
+                cursor.execute("ALTER TABLE recipes ADD COLUMN categories TEXT")
+                logger.info("  ✓ Created categories column")
+
+            conn.commit()
+            logger.info("✓ Schema migration to v4 completed")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
+
     def initialize(self):
         """Initialize database schema with migrations"""
         logger.info(f"📊 Initializing database: {self.db_path}")
@@ -247,6 +270,10 @@ class Database:
             self._migrate_from_v2_to_v3()
             self._set_schema_version(3)
 
+        if current_version < 4:
+            self._migrate_from_v3_to_v4()
+            self._set_schema_version(4)
+
         logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
@@ -261,9 +288,9 @@ class Database:
             INSERT INTO recipes (
                 id, name, description, installs, forks,
                 popularity_score, url, icon_url, thumbnail_url, created_at,
-                updated_at, last_fetched, user_id
+                updated_at, last_fetched, user_id, categories
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -275,7 +302,8 @@ class Database:
                 thumbnail_url = excluded.thumbnail_url,
                 updated_at = excluded.updated_at,
                 last_fetched = excluded.last_fetched,
-                user_id = excluded.user_id
+                user_id = excluded.user_id,
+                categories = excluded.categories
         """, (
             recipe_data['id'],
             recipe_data.get('name'),
@@ -289,7 +317,8 @@ class Database:
             recipe_data.get('created_at'),
             recipe_data.get('updated_at', now),
             now,
-            recipe_data.get('user_id')
+            recipe_data.get('user_id'),
+            recipe_data.get('categories')
         ))
 
         conn.commit()
@@ -346,6 +375,7 @@ class Database:
                 r.id,
                 r.name,
                 r.description,
+                r.categories,
                 r.installs as current_installs,
                 r.forks as current_forks,
                 r.popularity_score as current_popularity,
@@ -636,6 +666,7 @@ class Database:
                 r.id,
                 r.name,
                 r.description,
+                r.categories,
                 r.installs as current_installs,
                 r.forks as current_forks,
                 r.popularity_score as current_popularity,
