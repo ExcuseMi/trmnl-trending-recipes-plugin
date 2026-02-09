@@ -1,5 +1,6 @@
+{% template main %}
 <div class="layout layout--stretch">
-  <div class="columns" data-overflow-max-cols="3">
+  <div class="columns" data-overflow-max-cols="{{columns}}">
     <div class="column">
 
       {% assign sections = "user,global" | split: "," %}
@@ -45,7 +46,7 @@
           {% assign rank_diff = recipe.rank_difference %}
           {% assign current_rank = recipe.global_rank | default: 0 %}
 
-          <div class="item">
+          <div class="item{% if forloop.last %} item--group-last{% endif %}">
             <div class="icon self--start">
             <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" />
             </div>
@@ -90,4 +91,15 @@
     {% endcase %}
   </div>
 </div>
-<script />
+<style>
+.columns > .column + .column {
+  border-left: 1px solid gray;
+  padding-left: 8px;
+}
+.item--group-last {
+  border-bottom: 1px solid gray;
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+</style>
+{% endtemplate %}
