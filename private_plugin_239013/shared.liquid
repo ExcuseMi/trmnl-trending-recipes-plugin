@@ -12,7 +12,7 @@
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
-          <span class="label label--medium" data-group-header="true">Trending</span>
+          <span class="label label--medium" data-group-header="true">Trending ⇗</span>
           {% endif %}
           {% assign items = recipes %}
         {% endif %}
@@ -51,12 +51,12 @@
             <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" />
             </div>
             <div class="content pl--1 self--start">
-              <div class="title title--small" data-clamp="1">
+              <div class="title title--small" data-clamp="2">
                 {{ recipe.name }}
               </div>
               <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %} <span class="label label--gray" title="Rank improved by {{ rank_diff }} positions">▲{{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %} <span class="label label--gray" title="Rank dropped by {{ rank_diff_abs }} positions">▼{{ rank_diff_abs }}</span>{% endif %}</div>
             </div>
-            <div class="flex flex--col w--auto gap--none" style="align-items:stretch;margin-left:auto;">
+            <div class="flex flex--col w--auto gap--none self--start w--min-12" style="align-items:stretch;margin-left:auto;">
               {% if delta > 0 %}
               <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" title="Gained {{ delta_abs }} popularity">▲ {{ delta_abs }}</div>
               <div class="label label--outline w--full" style="justify-content:center;" title="Total popularity: {{ total_popularity }}">{{ pop_display }}</div>
