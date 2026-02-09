@@ -20,8 +20,6 @@ custom_fields:
   - Today: today
   - 24h: 24h
   - 3 Days: 3d
-  - 7 Days: 7d
-  - 30 Days: 30d
 - keyname: view_mode
   field_type: select
   name: View Mode
