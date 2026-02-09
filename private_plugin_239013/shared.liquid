@@ -65,10 +65,10 @@
                 <span class="label" title="Global rank">#{{ current_rank }}</span>
                 {% if rank_diff != null %}
                   {% if rank_diff > 0 %}
-                    <span class="label label--gray" title="Rank improved by {{ rank_diff }} positions">(+{{ rank_diff }})</span>
+                    <span class="label label--gray" title="Rank improved by {{ rank_diff }} positions">(↑{{ rank_diff }})</span>
                   {% elsif rank_diff < 0 %}
                     {% assign rank_diff_abs = rank_diff | abs %}
-                    <span class="label label--gray" title="Rank dropped by {{ rank_diff_abs }} positions">(-{{ rank_diff_abs }})</span>
+                    <span class="label label--gray" title="Rank dropped by {{ rank_diff_abs }} positions">(↓{{ rank_diff_abs }})</span>
                   {% endif %}
                 {% endif %}
               </div>
