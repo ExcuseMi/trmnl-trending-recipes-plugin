@@ -2,22 +2,19 @@
 <div class="layout layout--stretch">
   <div class="columns" data-overflow-max-cols="{{columns}}">
     <div class="column">
-
-      {% assign top_delta = 0 %}
-      {% for r in user_recipes %}{% if r.popularity_delta > top_delta %}{% assign top_delta = r.popularity_delta %}{% endif %}{% endfor %}
-      {% for r in recipes %}{% if r.popularity_delta > top_delta %}{% assign top_delta = r.popularity_delta %}{% endif %}{% endfor %}
-      {% assign top_gainer_found = false %}
-
       {% assign sections = "user,global" | split: "," %}
       {% for section in sections %}
 
         {% if section == "user" %}
           {% unless user_recipes %}{% continue %}{% endunless %}
-          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %} · <span class="m--1" data-fmt-number>{{ user_stats.total_popularity }}</span>{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+<span data-fmt-number>{{ us_delta }}</span>){% elsif us_delta < 0 %} (-<span data-fmt-number>{{ us_delta }}</span>){% endif %}{% endif %}</span>
+          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %} ·
+            <span class="m--1" data-fmt-number>{{ user_stats.total_popularity }}</span>{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+<span data-fmt-number>{{ us_delta }}</span>){% elsif us_delta < 0 %} (-<span data-fmt-number>{{ us_delta }}</span>){% endif %}{% endif %}</span>
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
-          <span class="label label--medium" data-group-header="true">Trending ⇗</span>
+          <span class="label label--medium" data-group-header="true">⇗ Trending {% if global_stats %} ·
+    <span class="m--1" data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% endif %}
+</span>
           {% endif %}
           {% assign items = recipes %}
         {% endif %}
@@ -38,19 +35,13 @@
           {% endif %}
           {% assign rank_diff = recipe.rank_difference %}
           {% assign current_rank = recipe.global_rank | default: 0 %}
-
-          {% assign is_top_gainer = false %}
-          {% if top_gainer_found == false and delta == top_delta and top_delta > 0 %}
-            {% assign is_top_gainer = true %}
-            {% assign top_gainer_found = true %}
-          {% endif %}
-          <div class="item {% if is_top_gainer %}item--emphasis-3 {% elsif section == "user" %}item--emphasis-2 {% endif %}{% if forloop.last %} item--group-last{% endif %}">
+          <div class="item {% if recipe.is_top_gainer %}item--emphasis-3 {% elsif section == "user" %}item--emphasis-2 {% endif %}{% if forloop.last %} item--group-last{% endif %}">
             <div class="meta"></div>
-            <div class="icon self--start">
-            <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
+            <div class="icon self--start m--0">
+            <img class="image w--8 h--8" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
             </div>
             <div class="content pl--1 self--start">
-              <div class="title title--small" data-clamp="2">
+              <div class="title title--small" data-value-fit="true" data-clamp="2">
                 {{ recipe.name }}
               </div>
               <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %}
@@ -87,10 +78,6 @@
     <path d="M5.5 5V19.5H20M7.5 16L11.5 11.5L15.5 14L19.5 8.5" stroke="#000000" stroke-width="1.2"/>
     </svg>
   <div class="title">{{trmnl.plugin_settings.instance_name}}
-  {% unless compact %}
-  {% assign age = trmnl.plugin_settings.custom_fields_values.max_age_days | default: "0" %}
-  {% unless age == "0" %} (last {% case age %}{% when "7" %}7 days{% when "14" %}14 days{% when "30" %}month{% when "90" %}3 months{% when "180" %}6 months{% when "365" %}year{% endcase %}){% endunless %}
-  {% endunless %}
   </div>
   <div class="instance">
     {% assign tf = trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" %}
@@ -102,10 +89,6 @@
       {% when "30d" %}Last 30 Days
       {% else %}{{ tf | upcase }}
     {% endcase %}
-    {% unless compact %}
-    {% if global_stats %}·
-    <span data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% endif %}
-    {% endunless %}
   </div>
 </div>
 <style>
