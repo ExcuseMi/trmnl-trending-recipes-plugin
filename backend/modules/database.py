@@ -769,7 +769,7 @@ class Database:
         # Check cache first
         cache_key = f"{timeframe}_{cutoff.isoformat()}"
         current_time = datetime.utcnow().timestamp()
-
+        cutoff_iso = cutoff.isoformat()
         if (cache_key in self._rank_cache and
                 current_time - self._rank_cache_timestamp < self._rank_cache_ttl):
             return self._rank_cache[cache_key]
