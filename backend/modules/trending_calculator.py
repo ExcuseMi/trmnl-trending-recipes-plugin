@@ -119,6 +119,10 @@ class TrendingCalculator:
         # Apply limit
         trending_recipes = trending_recipes[:limit]
 
+        # Flag top gainer
+        if trending_recipes and trending_recipes[0]['popularity_delta'] > 0:
+            trending_recipes[0]['is_top_gainer'] = True
+
         # Global stats
         use_hourly = timeframe_info['type'] == 'rolling'
         global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
@@ -331,7 +335,8 @@ class TrendingCalculator:
         return trending_recipes
 
     _DISPLAY_FIELDS = {'name', 'icon_url', 'popularity', 'popularity_delta',
-                       'recipe_age_days', 'global_rank', 'rank_difference'}
+                       'recipe_age_days', 'global_rank', 'rank_difference',
+                       'is_top_gainer'}
 
     def _strip_recipe(self, recipe: Dict) -> Dict:
         """Keep only fields used by the liquid templates"""

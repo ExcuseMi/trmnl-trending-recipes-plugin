@@ -3,6 +3,11 @@
   <div class="columns" data-overflow-max-cols="{{columns}}">
     <div class="column">
 
+      {% assign top_delta = 0 %}
+      {% for r in user_recipes %}{% if r.popularity_delta > top_delta %}{% assign top_delta = r.popularity_delta %}{% endif %}{% endfor %}
+      {% for r in recipes %}{% if r.popularity_delta > top_delta %}{% assign top_delta = r.popularity_delta %}{% endif %}{% endfor %}
+      {% assign top_gainer_found = false %}
+
       {% assign sections = "user,global" | split: "," %}
       {% for section in sections %}
 
@@ -34,7 +39,12 @@
           {% assign rank_diff = recipe.rank_difference %}
           {% assign current_rank = recipe.global_rank | default: 0 %}
 
-          <div class="item {% if section == "user" %}item--emphasis-2 {% endif %} {% if forloop.last %} item--group-last{% endif %}">
+          {% assign is_top_gainer = false %}
+          {% if top_gainer_found == false and delta == top_delta and top_delta > 0 %}
+            {% assign is_top_gainer = true %}
+            {% assign top_gainer_found = true %}
+          {% endif %}
+          <div class="item {% if is_top_gainer %}item--emphasis-3 {% elsif section == "user" %}item--emphasis-2 {% endif %}{% if forloop.last %} item--group-last{% endif %}">
             <div class="meta"></div>
             <div class="icon self--start">
             <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
