@@ -10,29 +10,38 @@
           {% unless user_recipes %}{% continue %}{% endunless %}
           {% if show_summary == "true" and user_stats %}
           <span class="label label--medium" data-group-header="true">My Developer Summary</span>
-          <div class="item outline">
+          <div class="item">
             <div class="flex gap w--full">
-              <div class="flex flex--col flex--center stat-col">
-                <span class="value value--xxsmall" data-value-fit="true" data-fmt-number>{{ user_stats.total_popularity }}</span>
-                <span class="label label--small">connections</span>
+              <div class="item stat-col">
+                <div class="meta"></div>
+                <div class="content">
+                  <span class="value value--xxsmall" data-value-fit="true" data-fmt-number>{{ user_stats.total_popularity }}</span>
+                  <span class="label label--small">connections</span>
+                </div>
               </div>
-              <div class="flex flex--col flex--center stat-col">
-                {% assign us_delta = user_stats.popularity_delta | default: 0 %}
-                {% if us_delta > 0 %}
-                <span class="value value--xxsmall" data-value-fit="true">+<span data-fmt-number>{{ us_delta }}</span></span>
-                <span class="label label--small">gained</span>
-                {% elsif us_delta < 0 %}
-                <span class="value value--xxsmall" data-value-fit="true">-<span data-fmt-number>{{ us_delta | abs }}</span></span>
-                <span class="label label--small">lost</span>
-                {% else %}
-                <span class="value value--xxsmall">--</span>
-                <span class="label label--small">change</span>
-                {% endif %}
+              <div class="item stat-col">
+                <div class="meta"></div>
+                <div class="content">
+                  {% assign us_delta = user_stats.popularity_delta | default: 0 %}
+                  {% if us_delta > 0 %}
+                  <span class="value value--xxsmall" data-value-fit="true">+<span data-fmt-number>{{ us_delta }}</span></span>
+                  <span class="label label--small">gained</span>
+                  {% elsif us_delta < 0 %}
+                  <span class="value value--xxsmall" data-value-fit="true">-<span data-fmt-number>{{ us_delta | abs }}</span></span>
+                  <span class="label label--small">lost</span>
+                  {% else %}
+                  <span class="value value--xxsmall">--</span>
+                  <span class="label label--small">change</span>
+                  {% endif %}
+                </div>
               </div>
               {% if user_stats.developer_rank %}
-              <div class="flex flex--col flex--center stat-col">
-                <span class="value value--xxsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
-                <span class="label label--small">of {{ global_stats.total_developers }} devs</span>
+              <div class="item stat-col">
+                <div class="meta"></div>
+                <div class="content">
+                  <span class="value value--xxsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
+                  <span class="label label--small">of {{ global_stats.total_developers }} devs</span>
+                </div>
               </div>
               {% endif %}
             </div>

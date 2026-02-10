@@ -12,9 +12,22 @@ custom_fields:
 - keyname: author_bio
   field_type: author_bio
   name: About This Plugin
-  description: "\"See what's trending in the TRMNL recipe community. Tracks recipe installs over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes and personalized views to highlight your own recipes alongside public trends.<br /><br />"
+  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes and personalized views to highlight your own recipes alongside public trends.<br /><br />"
   category: analytics
   github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
+- keyname: view_mode
+  field_type: select
+  name: View Mode
+  description: "<strong>Public</strong> shows only community trends.<br /><strong>Mine + Public</strong> prioritizes your recipes first, then fills with public trends.<br /><strong>Mine (all) </strong> includes your unchanged recipes too."
+  default: public
+  options:
+  - Public: public
+  - Mine + Public: user
+  - Mine (all) + Public: user_all
+  conditional_validation:
+  - when: public
+    hidden:
+    - show_summary
 - keyname: timeframe
   field_type: select
   name: Timeframe
@@ -24,6 +37,12 @@ custom_fields:
   - Today: today
   - 24h: 24h
   - 3 Days: 3d
+- keyname: show_summary
+  field_type: boolean
+  name: Developer Summary
+  description: "Show a summary card above your recipes with your total connections, growth delta, and global developer rank."
+  default: true
+  optional: false
 - keyname: max_age_days
   field_type: select
   name: Recipe Age
@@ -37,20 +56,5 @@ custom_fields:
   - Last 3 months: '90'
   - Last 6 months: '180'
   - Last year: '365'
-- keyname: show_summary
-  field_type: boolean
-  name: Show Summary
-  description: Show a stats summary row at the top of each section (developer rank, total connections, etc.).
-  default: true
-  optional: false
-- keyname: view_mode
-  field_type: select
-  name: View Mode
-  description: "<strong>Public</strong> shows only community trends.<br /><strong>Mine + Public</strong> prioritizes your recipes first, then fills with public trends.<br /><strong>Mine (all) </strong> includes your unchanged recipes too."
-  default: public
-  options:
-  - Public: public
-  - Mine + Public: user
-  - Mine (all) + Public: user_all
 name: Trending Recipes
 refresh_interval: 15
