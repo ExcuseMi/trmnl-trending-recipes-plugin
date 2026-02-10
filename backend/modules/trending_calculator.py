@@ -431,10 +431,9 @@ class TrendingCalculator:
                                              cutoff_iso: str = None) -> float:
         """Calculate trending score normalized to per-day growth rate"""
         try:
-            has_history = recipe.get('has_historical_data', False)
             popularity_delta = recipe.get('popularity_delta', 0) or 0
 
-            if not has_history or popularity_delta <= 0:
+            if popularity_delta <= 0:
                 return 0.0
 
             # For calendar timeframes, use actual elapsed time
