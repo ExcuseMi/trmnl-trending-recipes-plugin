@@ -192,7 +192,6 @@ class TrendingCalculator:
             dev_rank = self.database.get_user_rank(user_id)
             if dev_rank:
                 user_stats['developer_rank'] = dev_rank['global_rank']
-            user_stats['total_developers'] = total_developers
 
         # Filter user_recipes: only trending up unless include_unchanged (show all)
         if not include_unchanged:

@@ -11,12 +11,12 @@
           {% if show_summary == "true" and user_stats %}
           <span class="label label--medium" data-group-header="true">My Developer Summary</span>
           <div class="item outline">
-            <div class="summary-bar">
-              <div class="summary-stat">
+            <div class="flex gap w--full">
+              <div class="flex flex--col flex--center stat-col">
                 <span class="value value--xxsmall" data-value-fit="true" data-fmt-number>{{ user_stats.total_popularity }}</span>
                 <span class="label label--small">connections</span>
               </div>
-              <div class="summary-stat">
+              <div class="flex flex--col flex--center stat-col">
                 {% assign us_delta = user_stats.popularity_delta | default: 0 %}
                 {% if us_delta > 0 %}
                 <span class="value value--xxsmall" data-value-fit="true">+<span data-fmt-number>{{ us_delta }}</span></span>
@@ -30,9 +30,9 @@
                 {% endif %}
               </div>
               {% if user_stats.developer_rank %}
-              <div class="summary-stat">
+              <div class="flex flex--col flex--center stat-col">
                 <span class="value value--xxsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
-                <span class="label label--small">of {{ user_stats.total_developers }} devs</span>
+                <span class="label label--small">of {{ global_stats.total_developers }} devs</span>
               </div>
               {% endif %}
             </div>
@@ -122,18 +122,7 @@
 <style>
 .delta-col { align-items: stretch; margin-left: auto; }
 .label--center { justify-content: center; }
-.summary-bar {
-  display: flex;
-  gap: 12px;
-  flex: 1;
-  padding: 4px 0;
-}
-.summary-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: 1;
-}
+.stat-col { flex: 1; }
 </style>
 <script>
 function fmtNum(n) {

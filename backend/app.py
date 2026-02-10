@@ -74,7 +74,6 @@ def try_acquire_primary_worker():
     Uses a file lock to ensure only one worker runs background tasks.
     Returns True if this worker becomes primary.
     """
-    import fcntl
 
     try:
         # Try to create and lock the file
