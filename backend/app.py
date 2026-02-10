@@ -337,6 +337,7 @@ def get_trending():
                 include_unchanged=include_unchanged,
                 categories_filter=categories_filter,
                 max_age_days=max_age_days,
+                user_id=user_id,
             )
 
         else:
@@ -412,6 +413,8 @@ def recipe_fetch_worker():
             recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
             duration = time.time() - start_time
             logger.info(f"✓ Startup fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+            if recipes_processed > 0:
+                db.refresh_materialized_views()
         except Exception as e:
             logger.error(f"✗ Startup fetch failed: {e}")
 
@@ -434,6 +437,8 @@ def recipe_fetch_worker():
             recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
             duration = time.time() - start_time
             logger.info(f"✓ Hourly fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+            if recipes_processed > 0:
+                db.refresh_materialized_views()
 
         except Exception as e:
             logger.error(f"✗ Recipe fetch worker error: {e}")

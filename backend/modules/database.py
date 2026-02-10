@@ -17,7 +17,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.schema_version = 4  # Current schema version
+        self.schema_version = 5  # Current schema version
         self._rank_cache = {}
         self._rank_cache_timestamp = None
         self._rank_cache_ttl = 60*60
@@ -192,6 +192,43 @@ class Database:
             logger.error(f"✗ Schema migration failed: {e}")
             raise
 
+    def _migrate_from_v4_to_v5(self):
+        """Migrate database from schema version 4 to 5 - add materialized view tables for ranks"""
+        logger.info("🔧 Migrating database schema from v4 to v5...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mv_recipe_ranks (
+                    recipe_id TEXT PRIMARY KEY,
+                    popularity_score INTEGER NOT NULL,
+                    global_rank INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mv_user_ranks (
+                    user_id TEXT PRIMARY KEY,
+                    total_popularity INTEGER NOT NULL,
+                    recipe_count INTEGER NOT NULL,
+                    global_rank INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            conn.commit()
+            logger.info("✓ Schema migration to v5 completed")
+
+            # Populate MVs immediately
+            self.refresh_materialized_views()
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
+
     def initialize(self):
         """Initialize database schema with migrations"""
         logger.info(f"📊 Initializing database: {self.db_path}")
@@ -276,6 +313,10 @@ class Database:
         if current_version < 4:
             self._migrate_from_v3_to_v4()
             self._set_schema_version(4)
+
+        if current_version < 5:
+            self._migrate_from_v4_to_v5()
+            self._set_schema_version(5)
 
         logger.info("✓ Database schema initialized and up to date")
 
@@ -752,6 +793,80 @@ class Database:
         return None
 
 
+    def refresh_materialized_views(self):
+        """Refresh the materialized view tables for recipe and user ranks"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.utcnow().isoformat()
+
+        try:
+            # Refresh mv_recipe_ranks
+            cursor.execute("DELETE FROM mv_recipe_ranks")
+            cursor.execute("""
+                INSERT INTO mv_recipe_ranks (recipe_id, popularity_score, global_rank, updated_at)
+                SELECT id, popularity_score,
+                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as global_rank,
+                       ?
+                FROM recipes
+                WHERE popularity_score > 0
+            """, (now,))
+            recipe_count = cursor.rowcount
+
+            # Refresh mv_user_ranks
+            cursor.execute("DELETE FROM mv_user_ranks")
+            cursor.execute("""
+                INSERT INTO mv_user_ranks (user_id, total_popularity, recipe_count, global_rank, updated_at)
+                SELECT user_id, SUM(popularity_score) as total_popularity,
+                       COUNT(*) as recipe_count,
+                       ROW_NUMBER() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
+                       ?
+                FROM recipes
+                WHERE user_id IS NOT NULL AND popularity_score > 0
+                GROUP BY user_id
+            """, (now,))
+            user_count = cursor.rowcount
+
+            conn.commit()
+
+            # Invalidate rank cache
+            self._rank_cache = {}
+            self._rank_cache_timestamp = None
+
+            logger.info(f"✓ Materialized views refreshed: {recipe_count} recipes, {user_count} developers")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Failed to refresh materialized views: {e}")
+            raise
+
+    def get_user_rank(self, user_id: str) -> Optional[Dict]:
+        """Get a developer's rank from the materialized view"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT global_rank, total_popularity, recipe_count
+            FROM mv_user_ranks
+            WHERE user_id = ?
+        """, (user_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return {
+                'global_rank': row['global_rank'],
+                'total_popularity': row['total_popularity'],
+                'recipe_count': row['recipe_count'],
+            }
+        return None
+
+    def get_total_developers(self) -> int:
+        """Get total number of developers with ranked recipes"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) as total FROM mv_user_ranks")
+        return cursor.fetchone()['total']
+
     def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
         """Check if we should fetch all recipes (based on last fetch time)"""
         last_fetch = self.get_last_recipe_fetch_time()
@@ -774,27 +889,20 @@ class Database:
                 current_time - self._rank_cache_timestamp < self._rank_cache_ttl):
             return self._rank_cache[cache_key]
 
-        # Original calculation (simplified)
+        # Read current ranks from materialized view, compute past ranks for rank_difference
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # OPTIMIZATION 1: Use materialized CTE for better performance
         cursor.execute("""
-            WITH current_ranked AS (
-                SELECT id, popularity_score,
-                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as current_rank
-                FROM recipes
-                WHERE popularity_score > 0
-            ),
-            historical_snapshot AS (
+            WITH historical_snapshot AS (
                 SELECT recipe_id as id, popularity_score
                 FROM (
-                    SELECT 
+                    SELECT
                         recipe_id,
                         popularity_score,
                         snapshot_timestamp,
                         ROW_NUMBER() OVER (
-                            PARTITION BY recipe_id 
+                            PARTITION BY recipe_id
                             ORDER BY snapshot_timestamp DESC
                         ) as rn
                     FROM recipe_history
@@ -803,12 +911,12 @@ class Database:
                 UNION ALL
                 SELECT recipe_id as id, popularity_score
                 FROM (
-                    SELECT 
+                    SELECT
                         recipe_id,
                         popularity_score,
                         snapshot_timestamp,
                         ROW_NUMBER() OVER (
-                            PARTITION BY recipe_id 
+                            PARTITION BY recipe_id
                             ORDER BY snapshot_timestamp DESC
                         ) as rn
                     FROM recipe_hourly_snapshots
@@ -821,17 +929,17 @@ class Database:
                 ) WHERE rn = 1
             ),
             past_ranked AS (
-                SELECT id, 
+                SELECT id,
                        ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as past_rank
                 FROM historical_snapshot
                 WHERE popularity_score > 0
             )
-            SELECT 
-                cr.id,
-                cr.current_rank,
+            SELECT
+                mv.recipe_id as id,
+                mv.global_rank as current_rank,
                 COALESCE(pr.past_rank, (SELECT COUNT(*) + 1 FROM past_ranked)) as past_rank
-            FROM current_ranked cr
-            LEFT JOIN past_ranked pr ON cr.id = pr.id
+            FROM mv_recipe_ranks mv
+            LEFT JOIN past_ranked pr ON mv.recipe_id = pr.id
         """, (cutoff_iso, cutoff_iso, cutoff_iso))
 
         # Build result

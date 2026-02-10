@@ -7,13 +7,13 @@
 
         {% if section == "user" %}
           {% unless user_recipes %}{% continue %}{% endunless %}
-          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %} ·
+          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %}{% if user_stats.developer_rank %} · #{{ user_stats.developer_rank }}{% if user_stats.total_developers %}<span class="label--gray"> of {{ user_stats.total_developers }}</span>{% endif %}{% endif %} ·
             <span class="m--1" data-fmt-number>{{ user_stats.total_popularity }}</span>{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+<span data-fmt-number>{{ us_delta }}</span>){% elsif us_delta < 0 %} (-<span data-fmt-number>{{ us_delta }}</span>){% endif %}{% endif %}</span>
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
           <span class="label label--medium" data-group-header="true">🡕 Trending {% if global_stats %} ·
-    <span class="m--1" data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% endif %}
+    <span class="m--1" data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% if global_stats.total_developers %} · {{ global_stats.total_developers }} devs{% endif %}{% endif %}
 </span>
           {% endif %}
           {% assign items = recipes %}

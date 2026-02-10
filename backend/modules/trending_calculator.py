@@ -44,7 +44,8 @@ class TrendingCalculator:
                            user_recipe_ids: Optional[List[str]] = None,
                            include_unchanged: bool = False,
                            categories_filter: Optional[List[str]] = None,
-                           max_age_days: int = 0) -> Dict:
+                           max_age_days: int = 0,
+                           user_id: Optional[str] = None) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -80,7 +81,8 @@ class TrendingCalculator:
         if user_recipe_ids is not None:
             return self._calculate_dual_list(
                 timeframe, timeframe_info, limit, utc_offset_seconds, cutoff,
-                user_recipe_ids, include_unchanged, categories_filter, max_age_days
+                user_recipe_ids, include_unchanged, categories_filter, max_age_days,
+                user_id=user_id
             )
 
         # Single-list mode (original behavior)
@@ -126,6 +128,7 @@ class TrendingCalculator:
         # Global stats
         use_hourly = timeframe_info['type'] == 'rolling'
         global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
+        global_stats['total_developers'] = self.database.get_total_developers()
 
         # Strip internal-only fields
         trending_recipes = [self._strip_recipe(r) for r in trending_recipes]
@@ -140,7 +143,8 @@ class TrendingCalculator:
                              user_recipe_ids: List[str],
                              include_unchanged: bool,
                              categories_filter: Optional[List[str]],
-                             max_age_days: int = 0) -> Dict:
+                             max_age_days: int = 0,
+                             user_id: Optional[str] = None) -> Dict:
         """Calculate trending with dual-list mode: user_recipes + global recipes"""
 
         # Fetch ALL recipes (no filter)
@@ -177,10 +181,18 @@ class TrendingCalculator:
         global_recipes = [r for r in all_recipes if r['id'] not in user_id_set]
 
         # Compute user_stats from ALL user recipes (before filtering)
+        total_developers = self.database.get_total_developers()
         user_stats = {
             'total_popularity': sum(r['popularity'] for r in user_recipes_all),
             'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
         }
+
+        # Add developer rank if user_id is available
+        if user_id:
+            dev_rank = self.database.get_user_rank(user_id)
+            if dev_rank:
+                user_stats['developer_rank'] = dev_rank['global_rank']
+            user_stats['total_developers'] = total_developers
 
         # Filter user_recipes: only trending up unless include_unchanged (show all)
         if not include_unchanged:
@@ -208,6 +220,7 @@ class TrendingCalculator:
         # Global stats
         use_hourly = timeframe_info['type'] == 'rolling'
         global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
+        global_stats['total_developers'] = total_developers
 
         # Strip internal-only fields
         final_user = [self._strip_recipe(r) for r in final_user]
