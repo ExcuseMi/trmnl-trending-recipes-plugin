@@ -1,4 +1,5 @@
 {% template main %}
+{% assign show_summary = trmnl.plugin_settings.custom_fields_values.show_summary | default: "true" %}
 <div class="layout layout--stretch">
   <div class="columns" data-overflow-max-cols="{{columns}}">
     <div class="column">
@@ -7,14 +8,41 @@
 
         {% if section == "user" %}
           {% unless user_recipes %}{% continue %}{% endunless %}
-          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %}{% if user_stats.developer_rank %} · #{{ user_stats.developer_rank }}{% if user_stats.total_developers %}<span class="label--gray"> of {{ user_stats.total_developers }}</span>{% endif %}{% endif %} ·
-            <span class="m--1" data-fmt-number>{{ user_stats.total_popularity }}</span>{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+<span data-fmt-number>{{ us_delta }}</span>){% elsif us_delta < 0 %} (-<span data-fmt-number>{{ us_delta }}</span>){% endif %}{% endif %}</span>
+          {% if show_summary == "true" and user_stats %}
+          <span class="label label--medium" data-group-header="true">My Developer Summary</span>
+          <div class="item outline">
+            <div class="summary-bar">
+              <div class="summary-stat">
+                <span class="value value--xxsmall" data-value-fit="true" data-fmt-number>{{ user_stats.total_popularity }}</span>
+                <span class="label label--small">connections</span>
+              </div>
+              <div class="summary-stat">
+                {% assign us_delta = user_stats.popularity_delta | default: 0 %}
+                {% if us_delta > 0 %}
+                <span class="value value--xxsmall" data-value-fit="true">+<span data-fmt-number>{{ us_delta }}</span></span>
+                <span class="label label--small">gained</span>
+                {% elsif us_delta < 0 %}
+                <span class="value value--xxsmall" data-value-fit="true">-<span data-fmt-number>{{ us_delta | abs }}</span></span>
+                <span class="label label--small">lost</span>
+                {% else %}
+                <span class="value value--xxsmall">--</span>
+                <span class="label label--small">change</span>
+                {% endif %}
+              </div>
+              {% if user_stats.developer_rank %}
+              <div class="summary-stat">
+                <span class="value value--xxsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
+                <span class="label label--small">of {{ user_stats.total_developers }} devs</span>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+          <span class="label label--medium" data-group-header="true">My Recipes</span>
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
-          <span class="label label--medium" data-group-header="true">🡕 Trending {% if global_stats %} ·
-    <span class="m--1" data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% if global_stats.total_developers %} · {{ global_stats.total_developers }} devs{% endif %}{% endif %}
-</span>
+          <span class="label label--medium" data-group-header="true">Trending</span>
           {% endif %}
           {% assign items = recipes %}
         {% endif %}
@@ -94,6 +122,18 @@
 <style>
 .delta-col { align-items: stretch; margin-left: auto; }
 .label--center { justify-content: center; }
+.summary-bar {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  padding: 4px 0;
+}
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
 </style>
 <script>
 function fmtNum(n) {

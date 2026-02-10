@@ -7,14 +7,14 @@ polling_verb: get
 polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.max_age_days != "0" %}&max_age_days={{trmnl.plugin_settings.custom_fields_values.max_age_days}}{% endif %}{% if trmnl.plugin_settings.custom_fields_values.view_mode == "user" %}&user_id={{trmnl.user.id}}&include_unchanged=false{% elsif trmnl.plugin_settings.custom_fields_values.view_mode == "user_all" %}&user_id={{trmnl.user.id}}&include_unchanged=true{% endif %}
 polling_headers: ''
 polling_body: ''
-id: 241231
+id: 241645
 custom_fields:
 - keyname: author_bio
   field_type: author_bio
   name: About This Plugin
   description: "\"See what's trending in the TRMNL recipe community. Tracks recipe installs over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes and personalized views to highlight your own recipes alongside public trends.<br /><br />"
   category: analytics
-  github_url: "https://github.com/ExcuseMi/trmnl-trending-recipes-plugin"
+  github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
 - keyname: timeframe
   field_type: select
   name: Timeframe
@@ -27,16 +27,22 @@ custom_fields:
 - keyname: max_age_days
   field_type: select
   name: Recipe Age
-  description: "Only show recipes published within this period. Older recipes keep their global rank but won't appear in the list."
-  default: "0"
+  description: Only show recipes published within this period. Older recipes keep their global rank but won't appear in the list.
+  default: '0'
   options:
-  - All: "0"
-  - Last 7 days: "7"
-  - Last 14 days: "14"
-  - Last month: "30"
-  - Last 3 months: "90"
-  - Last 6 months: "180"
-  - Last year: "365"
+  - All: '0'
+  - Last 7 days: '7'
+  - Last 14 days: '14'
+  - Last month: '30'
+  - Last 3 months: '90'
+  - Last 6 months: '180'
+  - Last year: '365'
+- keyname: show_summary
+  field_type: boolean
+  name: Show Summary
+  description: Show a stats summary row at the top of each section (developer rank, total connections, etc.).
+  default: true
+  optional: false
 - keyname: view_mode
   field_type: select
   name: View Mode
