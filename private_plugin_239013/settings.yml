@@ -31,8 +31,11 @@ custom_fields:
   options:
   - All: '0'
   - Last 7 days: '7'
-  - Last 30 days: '30'
-  - Last 90 days: '90'
+  - Last 14 days: '14'
+  - Last month: '30'
+  - Last 3 months: '90'
+  - Last 6 months: '180'
+  - Last year: '365'
 - keyname: view_mode
   field_type: select
   name: View Mode
