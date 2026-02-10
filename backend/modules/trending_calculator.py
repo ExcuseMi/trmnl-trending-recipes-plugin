@@ -43,7 +43,8 @@ class TrendingCalculator:
                            include_all: bool = False,
                            user_recipe_ids: Optional[List[str]] = None,
                            include_unchanged: bool = False,
-                           categories_filter: Optional[List[str]] = None) -> Dict:
+                           categories_filter: Optional[List[str]] = None,
+                           max_age_days: int = 0) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -79,7 +80,7 @@ class TrendingCalculator:
         if user_recipe_ids is not None:
             return self._calculate_dual_list(
                 timeframe, timeframe_info, limit, utc_offset_seconds, cutoff,
-                user_recipe_ids, include_unchanged, categories_filter
+                user_recipe_ids, include_unchanged, categories_filter, max_age_days
             )
 
         # Single-list mode (original behavior)
@@ -108,6 +109,13 @@ class TrendingCalculator:
                 if any(c in categories_filter for c in r.get('categories', []))
             ]
 
+        # Apply age filter (after ranks so rankings stay global)
+        if max_age_days > 0:
+            trending_recipes = [
+                r for r in trending_recipes
+                if r.get('recipe_age_days', 0) <= max_age_days
+            ]
+
         # Apply limit
         trending_recipes = trending_recipes[:limit]
 
@@ -127,7 +135,8 @@ class TrendingCalculator:
                              utc_offset_seconds: int, cutoff: datetime,
                              user_recipe_ids: List[str],
                              include_unchanged: bool,
-                             categories_filter: Optional[List[str]]) -> Dict:
+                             categories_filter: Optional[List[str]],
+                             max_age_days: int = 0) -> Dict:
         """Calculate trending with dual-list mode: user_recipes + global recipes"""
 
         # Fetch ALL recipes (no filter)
@@ -172,6 +181,13 @@ class TrendingCalculator:
             user_recipes_filtered = [r for r in user_recipes_all if r['popularity_delta'] != 0]
         else:
             user_recipes_filtered = list(user_recipes_all)
+
+        # Apply age filter to global recipes only (user's own always show)
+        if max_age_days > 0:
+            global_recipes = [
+                r for r in global_recipes
+                if r.get('recipe_age_days', 0) <= max_age_days
+            ]
 
         # Sort: user_recipes by popularity_delta DESC, global by trending_score DESC
         user_recipes_filtered.sort(key=lambda x: x['popularity_delta'], reverse=True)
@@ -268,13 +284,7 @@ class TrendingCalculator:
         trending_recipes = []
 
         for recipe in recipes:
-            # Get full recipe details including published_at
-            recipe_details = self.database.get_recipe_current(recipe['id'])
-
-            if not recipe_details:
-                continue
-
-            published_at_str = recipe_details.get('created_at')  # This is actually published_at
+            published_at_str = recipe.get('created_at')
             recipe_age_days = self._calculate_recipe_age_days(published_at_str) if published_at_str else 0
 
             trending_score = self._calculate_trending_score_for_period(

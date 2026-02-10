@@ -315,6 +315,12 @@ def get_trending():
     categories_param = request.args.get('categories', '').strip()
     categories_filter = [c.strip() for c in categories_param.split(',') if c.strip()] if categories_param else None
 
+    # Parse max recipe age filter (0 = no filter)
+    try:
+        max_age_days = int(request.args.get('max_age_days', '0'))
+    except ValueError:
+        max_age_days = 0
+
     try:
         # Resolve user_id to recipe_ids if requested
         user_id = request.args.get('user_id')
@@ -330,6 +336,7 @@ def get_trending():
                 user_recipe_ids=user_recipe_ids,
                 include_unchanged=include_unchanged,
                 categories_filter=categories_filter,
+                max_age_days=max_age_days,
             )
 
         else:
@@ -338,6 +345,7 @@ def get_trending():
                 limit=limit,
                 utc_offset_seconds=utc_offset,
                 categories_filter=categories_filter,
+                max_age_days=max_age_days,
             )
 
         return jsonify(trending_data)
