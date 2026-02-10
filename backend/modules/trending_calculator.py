@@ -168,7 +168,9 @@ class TrendingCalculator:
                 r for r in all_recipes
                 if any(c in categories_filter for c in r.get('categories', []))
             ]
-
+        # Flag top gainer
+        if all_recipes and all_recipes[0]['popularity_delta'] > 0:
+            all_recipes[0]['is_top_gainer'] = True
         # Partition into user_recipes and global_recipes
         user_id_set = set(user_recipe_ids)
         user_recipes_all = [r for r in all_recipes if r['id'] in user_id_set]
