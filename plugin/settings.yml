@@ -12,7 +12,7 @@ custom_fields:
 - keyname: author_bio
   field_type: author_bio
   name: About This Plugin
-  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes and personalized views to highlight your own recipes alongside public trends.<br /><br />"
+  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs and forks over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes, personalized views to highlight your own recipes alongside public trends, and a developer summary showing your global rank and connection stats.<br /><br />"
   category: analytics
   github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
 - keyname: view_mode
