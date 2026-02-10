@@ -320,7 +320,7 @@ class TrendingCalculator:
                 'popularity': recipe['current_popularity'],
                 'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
                 'trending_score': trending_score,
-                'recipe_age_days': recipe_age_days
+                'recipe_age_days': int(recipe_age_days)
             })
 
         # Sort by popularity when showing all, otherwise by trending score
@@ -342,10 +342,10 @@ class TrendingCalculator:
         """Keep only fields used by the liquid templates"""
         return {k: v for k, v in recipe.items() if k in self._DISPLAY_FIELDS}
 
-    def _calculate_recipe_age_days(self, published_at_str: str) -> float:
+    def _calculate_recipe_age_days(self, published_at_str: str) -> int:
         """Calculate how many days old a recipe is"""
         if not published_at_str:
-            return 0.0
+            return 0
 
         try:
             # Try multiple date formats with timezone awareness
@@ -378,18 +378,18 @@ class TrendingCalculator:
 
             if not published_at:
                 logger.warning(f"Could not parse date: {published_at_str}")
-                return 0.0
+                return 0
 
             # Get current time in UTC with timezone awareness
             now_utc = datetime.now(timezone.utc)
 
             # Calculate difference
             age_seconds = (now_utc - published_at).total_seconds()
-            return age_seconds / 86400  # Convert to days
+            return int(age_seconds / 86400)  # Convert to days
 
         except Exception as e:
             logger.error(f"Error calculating age for {published_at_str}: {e}")
-            return 0.0
+            return 0
 
     def _get_local_midnight(self, utc_offset_seconds: int) -> datetime:
         """Get the most recent local midnight in UTC"""
