@@ -850,3 +850,32 @@ class Database:
             }
 
         return result
+
+    def get_global_stats(self, cutoff: datetime, use_hourly: bool = False) -> Dict:
+        """Get total connections (sum of popularity) now and at cutoff"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Current total
+        cursor.execute("SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes")
+        total_now = cursor.fetchone()['total']
+
+        # Past total from closest snapshot before cutoff for each recipe
+        cutoff_iso = cutoff.isoformat() + ('Z' if use_hourly else '')
+        table = 'recipe_hourly_snapshots' if use_hourly else 'recipe_history'
+
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(popularity_score), 0) as total FROM (
+                SELECT recipe_id, popularity_score,
+                    ROW_NUMBER() OVER (PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC) as rn
+                FROM {table}
+                WHERE snapshot_timestamp <= ?
+            ) sub
+            WHERE rn = 1
+        """, (cutoff_iso,))
+        total_past = cursor.fetchone()['total']
+
+        return {
+            'total_connections': total_now,
+            'total_connections_delta': total_now - total_past,
+        }

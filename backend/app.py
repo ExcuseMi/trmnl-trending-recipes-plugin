@@ -332,10 +332,6 @@ def get_trending():
                 categories_filter=categories_filter,
             )
 
-            trending_data['user_filter'] = {
-                'user_id': user_id,
-                'recipe_ids_count': len(user_recipe_ids),
-            }
         else:
             trending_data = trending_calculator.calculate_trending(
                 timeframe=timeframe,

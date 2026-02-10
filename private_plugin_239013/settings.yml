@@ -12,9 +12,12 @@ custom_fields:
 - keyname: author_bio
   field_type: author_bio
   name: About This Plugin
+  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes and personalized views to highlight your own recipes alongside public trends."
+  github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
 - keyname: timeframe
   field_type: select
   name: Timeframe
+  description: "How far back to look when calculating trending recipes."
   default: 24h
   options:
   - Today: today
@@ -23,6 +26,7 @@ custom_fields:
 - keyname: view_mode
   field_type: select
   name: View Mode
+  description: "<strong>Public</strong> shows only community trends.<br /><strong>Mine + Public</strong> prioritizes your recipes first, then fills with public trends.<br /><strong>Mine (all) </strong> includes your unchanged recipes too."
   default: public
   options:
   - Public: public

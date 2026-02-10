@@ -111,17 +111,17 @@ class TrendingCalculator:
         # Apply limit
         trending_recipes = trending_recipes[:limit]
 
-        # Build response
-        response = {
-            'timeframe': timeframe,
-            'type': timeframe_info['type'],
-            'utc_offset_seconds': utc_offset_seconds,
-            'count': len(trending_recipes),
-            'recipes': trending_recipes,
-            'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
-        }
+        # Global stats
+        use_hourly = timeframe_info['type'] == 'rolling'
+        global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
 
-        return response
+        # Strip internal-only fields
+        trending_recipes = [self._strip_recipe(r) for r in trending_recipes]
+
+        return {
+            'recipes': trending_recipes,
+            'global_stats': global_stats,
+        }
 
     def _calculate_dual_list(self, timeframe: str, timeframe_info: Dict, limit: int,
                              utc_offset_seconds: int, cutoff: datetime,
@@ -183,19 +183,20 @@ class TrendingCalculator:
         remaining = max(0, limit - len(final_user))
         final_global = global_recipes[:remaining]
 
-        # Build response
-        response = {
-            'timeframe': timeframe,
-            'type': timeframe_info['type'],
-            'utc_offset_seconds': utc_offset_seconds,
-            'count': len(final_user) + len(final_global),
+        # Global stats
+        use_hourly = timeframe_info['type'] == 'rolling'
+        global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
+
+        # Strip internal-only fields
+        final_user = [self._strip_recipe(r) for r in final_user]
+        final_global = [self._strip_recipe(r) for r in final_global]
+
+        return {
             'user_recipes': final_user,
             'recipes': final_global,
             'user_stats': user_stats,
-            'calculation_info': self._get_calculation_info(timeframe, utc_offset_seconds)
+            'global_stats': global_stats,
         }
-
-        return response
 
     def _calculate_calendar_trending(self, timeframe: str, limit: Optional[int],
                                      utc_offset_seconds: int,
@@ -293,17 +294,6 @@ class TrendingCalculator:
             if not include_all and trending_score <= 0:
                 continue
 
-            # Get delta for the requested timeframe
-            if timeframe in ['today', 'week']:
-                main_delta = self._get_delta_for_timeframe(
-                    recipe['id'], timeframe, utc_offset_seconds
-                )
-            else:
-                timeframe_info = self.TIMEFRAMES[timeframe]
-                main_delta = self._get_delta_for_rolling(
-                    recipe['id'], timeframe_info.get('hours', 24)
-                )
-
             # Parse categories into array
             categories_raw = recipe.get('categories') or ''
             categories_list = [c.strip() for c in categories_raw.split(',') if c.strip()]
@@ -312,18 +302,10 @@ class TrendingCalculator:
                 'id': recipe['id'],
                 'name': recipe['name'],
                 'categories': categories_list,
-                'url': recipe['url'],
                 'icon_url': recipe['icon_url'],
-                'thumbnail_url': recipe['thumbnail_url'],
                 'popularity': recipe['current_popularity'],
                 'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
                 'trending_score': trending_score,
-                'timeframe': timeframe,
-                'has_historical_data': recipe.get('has_history', False),
-                'popularity_growth_pct': ((recipe['current_popularity'] - recipe.get('past_popularity', 0)) /
-                                          recipe['current_popularity'] * 100) if recipe[
-                                                                                     'current_popularity'] > 0 else 0,
-                'published_at': published_at_str,
                 'recipe_age_days': recipe_age_days
             })
 
@@ -337,6 +319,13 @@ class TrendingCalculator:
         if limit is not None:
             return trending_recipes[:limit]
         return trending_recipes
+
+    _DISPLAY_FIELDS = {'name', 'icon_url', 'popularity', 'popularity_delta',
+                       'recipe_age_days', 'global_rank', 'rank_difference'}
+
+    def _strip_recipe(self, recipe: Dict) -> Dict:
+        """Keep only fields used by the liquid templates"""
+        return {k: v for k, v in recipe.items() if k in self._DISPLAY_FIELDS}
 
     def _calculate_recipe_age_days(self, published_at_str: str) -> float:
         """Calculate how many days old a recipe is"""
@@ -438,118 +427,4 @@ class TrendingCalculator:
         except Exception as e:
             logger.error(f"Error calculating trending score: {e}")
             return 0.0
-    def _get_delta_for_timeframe(self, recipe_id: str, timeframe: str, utc_offset_seconds: int = 0) -> Dict:
-        """Get delta for a specific timeframe"""
-        try:
-            now_utc = datetime.utcnow()
-
-            if timeframe == 'today':
-                cutoff = self._get_local_midnight(utc_offset_seconds)
-            elif timeframe == 'week':
-                cutoff = self._get_week_start(utc_offset_seconds)
-            else:
-                cutoff = now_utc - timedelta(hours=24)  # Default to 24h
-
-            delta_data = self.database.get_recipe_delta_since(recipe_id, cutoff)
-
-            if delta_data:
-                return {
-                    'installs': delta_data.get('delta_installs', 0),
-                    'forks': delta_data.get('delta_forks', 0),
-                    'popularity': delta_data.get('delta_popularity', 0),
-                    'timeframe': timeframe,
-                    'has_data': delta_data.get('has_data', False),
-                    'past_timestamp': delta_data.get('past_snapshot_timestamp'),
-                    'period_start': cutoff.isoformat(),
-                    'current_popularity': delta_data.get('current_popularity', 0),
-                    'past_popularity': delta_data.get('past_popularity', 0)
-                }
-            else:
-                return self._get_empty_delta(timeframe, cutoff)
-
-        except Exception as e:
-            logger.error(f"Error getting delta for {timeframe}: {e}")
-            return self._get_empty_delta(timeframe, datetime.utcnow() - timedelta(hours=24))
-
-    def _get_delta_for_rolling(self, recipe_id: str, hours: int) -> Dict:
-        """Get delta for a rolling timeframe using hourly snapshots"""
-        try:
-            cutoff = datetime.utcnow() - timedelta(hours=hours)
-
-            delta_data = self.database.get_recipe_delta_since_hours(recipe_id, hours)
-
-            if delta_data:
-                return {
-                    'installs': delta_data.get('delta_installs', 0),
-                    'forks': delta_data.get('delta_forks', 0),
-                    'popularity': delta_data.get('delta_popularity', 0),
-                    'hours': hours,
-                    'has_data': delta_data.get('has_data', False),
-                    'past_timestamp': delta_data.get('past_snapshot_timestamp'),
-                    'period_start': cutoff.isoformat(),
-                    'current_popularity': delta_data.get('current_popularity', 0),
-                    'past_popularity': delta_data.get('past_popularity', 0)
-                }
-            else:
-                return self._get_empty_delta(f"{hours}h", cutoff)
-
-        except Exception as e:
-            logger.error(f"Error getting delta for {hours}h: {e}")
-            return self._get_empty_delta(f"{hours}h", datetime.utcnow() - timedelta(hours=hours))
-
-    def _get_empty_delta(self, timeframe: str, cutoff: datetime) -> Dict:
-        """Return empty delta structure"""
-        if timeframe.endswith('h'):
-            hours = int(timeframe[:-1]) if timeframe[:-1].isdigit() else 24
-            return {
-                'installs': 0,
-                'forks': 0,
-                'popularity': 0,
-                'hours': hours,
-                'has_data': False,
-                'period_start': cutoff.isoformat()
-            }
-        else:
-            return {
-                'installs': 0,
-                'forks': 0,
-                'popularity': 0,
-                'timeframe': timeframe,
-                'has_data': False,
-                'period_start': cutoff.isoformat()
-            }
-    def _get_calculation_info(self, timeframe: str, utc_offset_seconds: int) -> Dict:
-        """Get information about how the trending was calculated"""
-        info = {
-            'utc_offset_applied': utc_offset_seconds,
-            'current_utc_time': datetime.utcnow().isoformat()
-        }
-
-        timeframe_info = self.TIMEFRAMES[timeframe]
-
-        if timeframe_info['type'] == 'calendar':
-            if timeframe == 'today':
-                midnight = self._get_local_midnight(utc_offset_seconds)
-                info.update({
-                    'period_start': midnight.isoformat(),
-                    'period_type': 'calendar_day',
-                    'local_midnight': midnight.isoformat()
-                })
-            elif timeframe == 'week':
-                week_start = self._get_week_start(utc_offset_seconds)
-                info.update({
-                    'period_start': week_start.isoformat(),
-                    'period_type': 'calendar_week',
-                    'week_start': week_start.isoformat()
-                })
-        else:
-            hours = timeframe_info.get('hours', 24)
-            cutoff = datetime.utcnow() - timedelta(hours=hours)
-            info.update({
-                'period_start': cutoff.isoformat(),
-                'period_type': 'rolling_window',
-                'window_hours': hours
-            })
-
-        return info
 
