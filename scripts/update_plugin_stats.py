@@ -1,45 +1,23 @@
 #!/usr/bin/env python3
-import requests
-import re
-import os
 import hashlib
+import os
+import re
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse
+
+import requests
 
 
 def load_plugin_config():
-    """Load plugin IDs from plugins.env file in ../script directory"""
+    """Load plugin IDs from plugins.env file"""
     config = {
         'plugin_ids': [],
         'section_title': '🚀 Plugin Statistics',
         'images_dir': 'assets/plugin-images'
     }
 
-    # Try multiple possible locations for plugins.env
-    possible_paths = [
-        '../script/plugins.env',  # From scripts/ directory looking into script/
-        'plugins.env',            # Current directory
-        './plugins.env',          # Current directory explicitly
-        '../plugins.env',         # Parent directory
-    ]
-
-    env_file_path = None
-    for path in possible_paths:
-        if os.path.exists(path):
-            env_file_path = path
-            print(f"📁 Found plugins.env at: {path}")
-            break
-
-    if not env_file_path:
-        print("⚠️  plugins.env file not found in any of the expected locations:")
-        for path in possible_paths:
-            print(f"   - {path}")
-        print("Using default configuration.")
-        return config
-
     try:
-        with open(env_file_path, 'r') as f:
+        with open('plugins.env', 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
@@ -54,24 +32,90 @@ def load_plugin_config():
                             config['section_title'] = value
                         elif key == 'IMAGES_DIR':
                             config['images_dir'] = value
-    except Exception as e:
-        print(f"⚠️  Error reading plugins.env from {env_file_path}: {e}")
-        print("Using default configuration.")
+    except FileNotFoundError:
+        print("⚠️  plugins.env file not found. Using default configuration.")
 
     return config
 
 
-def download_image(url: str, save_path: str, max_retries=3):
-    """Download an image from URL and save it locally with retry logic"""
+def get_image_extension(url: str, content_type: str = None):
+    """
+    Extract file extension from URL or Content-Type header
+
+    Args:
+        url: Image URL
+        content_type: Content-Type header from response
+
+    Returns:
+        File extension with dot (e.g., '.png', '.svg')
+    """
+    # First try Content-Type header (most reliable)
+    if content_type:
+        content_type = content_type.lower().split(';')[0].strip()
+
+        mime_to_ext = {
+            'image/svg+xml': '.svg',
+            'image/png': '.png',
+            'image/jpeg': '.jpg',
+            'image/jpg': '.jpg',
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+            'image/bmp': '.bmp',
+            'image/x-icon': '.ico',
+        }
+
+        if content_type in mime_to_ext:
+            return mime_to_ext[content_type]
+
+    # Fall back to URL parsing (remove query parameters)
+    parsed = urlparse(url)
+    path = parsed.path.split('?')[0]  # Remove query params
+    _, ext = os.path.splitext(path)
+
+    # Normalize extension
+    if ext:
+        ext = ext.lower()
+        # Handle common variations
+        if ext in ['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico']:
+            return ext
+
+    # Default to .png if we can't determine
+    return '.png'
+
+
+def fetch_and_save_image(url: str, plugin_id: str, image_type: str, images_dir: str, max_retries=3):
+    """
+    Fetch image with proper extension detection and save locally
+
+    Args:
+        url: Image URL
+        plugin_id: Plugin ID for filename
+        image_type: 'icon' or 'screenshot'
+        images_dir: Directory to save images
+        max_retries: Number of retry attempts
+
+    Returns:
+        Local file path if successful, None otherwise
+    """
     for attempt in range(max_retries):
         try:
             headers = {
                 'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
+                'Pragma': 'no-cache',
+                'User-Agent': 'Mozilla/5.0 (compatible; PluginStatsBot/1.0)'
             }
             response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
 
+            # Get extension from Content-Type header
+            content_type = response.headers.get('Content-Type', '')
+            ext = get_image_extension(url, content_type)
+
+            # Build filename and path
+            filename = f"{plugin_id}_{image_type}{ext}"
+            save_path = os.path.join(images_dir, filename)
+
+            # Get content
             new_content = response.content
             new_hash = hashlib.md5(new_content).hexdigest()
 
@@ -81,41 +125,32 @@ def download_image(url: str, save_path: str, max_retries=3):
                     old_hash = hashlib.md5(f.read()).hexdigest()
 
                 if old_hash == new_hash:
-                    print(f"  ↪ Unchanged: {os.path.basename(save_path)}")
-                    return True
+                    print(f"  ↪ Unchanged: {filename}")
+                    return save_path
 
-            # Create directory if it doesn't exist
+            # Create directory if needed
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-            # Save the image
+            # Save the file
             with open(save_path, 'wb') as f:
                 f.write(new_content)
 
-            print(f"  ✓ Updated: {os.path.basename(save_path)}")
-            return True
+            print(f"  ✓ Updated: {filename} ({content_type or 'unknown type'})")
+            return save_path
 
         except requests.RequestException as e:
             if attempt < max_retries - 1:
-                print(f"  ⚠️  Retry {attempt + 1}/{max_retries - 1} for {os.path.basename(save_path)}")
+                print(f"  ⚠️  Retry {attempt + 1}/{max_retries - 1} for {image_type}")
             else:
-                print(f"  ✗ Failed to download {os.path.basename(save_path)} after {max_retries} attempts: {e}")
-                return False
+                print(f"  ✗ Failed to download {image_type} after {max_retries} attempts: {e}")
+                return None
 
-    return False
-
-
-def get_image_extension(url: str):
-    """Extract file extension from URL"""
-    parsed = urlparse(url)
-    path = parsed.path
-    _, ext = os.path.splitext(path)
-    # Default to .png if no extension found
-    return ext if ext else '.png'
+    return None
 
 
 def fetch_plugin_data(plugin_id: str, max_retries=3):
     """Fetch plugin data from TRMNL API with retry logic"""
-    url = f"https://usetrmnl.com/recipes/{plugin_id}.json"
+    url = f"https://trmnl.com/recipes/{plugin_id}.json"
 
     for attempt in range(max_retries):
         try:
@@ -157,22 +192,16 @@ def process_plugin_images(plugin_id: str, plugin_data: dict, images_dir: str):
 
     # Download icon
     if icon_url:
-        icon_ext = get_image_extension(icon_url)
-        icon_filename = f"{plugin_id}_icon{icon_ext}"
-        icon_path = os.path.join(images_dir, icon_filename)
-
-        if download_image(icon_url, icon_path):
+        icon_path = fetch_and_save_image(icon_url, plugin_id, 'icon', images_dir)
+        if icon_path:
             local_paths['icon'] = icon_path
         else:
             download_success = False
 
     # Download screenshot
     if screenshot_url:
-        screenshot_ext = get_image_extension(screenshot_url)
-        screenshot_filename = f"{plugin_id}_screenshot{screenshot_ext}"
-        screenshot_path = os.path.join(images_dir, screenshot_filename)
-
-        if download_image(screenshot_url, screenshot_path):
+        screenshot_path = fetch_and_save_image(screenshot_url, plugin_id, 'screenshot', images_dir)
+        if screenshot_path:
             local_paths['screenshot'] = screenshot_path
         else:
             download_success = False
@@ -190,7 +219,7 @@ def generate_plugin_section(data, plugin_id: str, image_paths: dict):
 
 This plugin is configured but either hasn't been published to the TRMNL marketplace yet or the API is temporarily unavailable.
 
-**Plugin URL**: https://usetrmnl.com/recipes/{plugin_id}
+**Plugin URL**: https://trmnl.com/recipes/{plugin_id}
 
 ---
 """
@@ -206,7 +235,7 @@ This plugin is configured but either hasn't been published to the TRMNL marketpl
 
 The plugin exists but data is not available yet. This usually means it's very new or still being processed.
 
-**Plugin URL**: https://usetrmnl.com/recipes/{plugin_id}
+**Plugin URL**: https://trmnl.com/recipes/{plugin_id}
 
 ---
 """
@@ -224,7 +253,7 @@ The plugin exists but data is not available yet. This usually means it's very ne
     forks = stats.get('forks', 0)
 
     markdown = f"""
-## <img src="{icon_path}" alt="{name} icon" width="32"/> [{name}](https://usetrmnl.com/recipes/{plugin_id})
+## <img src="{icon_path}" alt="{name} icon" width="32"/> [{name}](https://trmnl.com/recipes/{plugin_id})
 
 ![{name} screenshot]({screenshot_path})
 
