@@ -12,7 +12,7 @@
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
-          <span class="label label--medium" data-group-header="true">⇗ Trending {% if global_stats %} ·
+          <span class="label label--medium" data-group-header="true">🡕 Trending {% if global_stats %} ·
     <span class="m--1" data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% endif %}
 </span>
           {% endif %}
