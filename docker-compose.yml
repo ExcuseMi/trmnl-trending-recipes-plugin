@@ -26,6 +26,18 @@ services:
       retries: 3
       start_period: 10s
 
+  db-backup:
+    build:
+      context: ./backend
+      dockerfile: backup.Dockerfile
+    container_name: trmnl-db-backup
+    volumes:
+      - recipe-data:/data
+      - ./backups:/backups
+    environment:
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
+    restart: unless-stopped
+
 volumes:
   recipe-data:
     driver: local
