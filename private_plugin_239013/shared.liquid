@@ -46,7 +46,8 @@
           {% assign rank_diff = recipe.rank_difference %}
           {% assign current_rank = recipe.global_rank | default: 0 %}
 
-          <div class="item{% if forloop.last %} item--group-last{% endif %}">
+          <div class="item {% if section == "user" %}item--emphasis-2 {% endif %} {% if forloop.last %} item--group-last{% endif %}">
+            <div class="meta"></div>
             <div class="icon self--start">
             <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" />
             </div>
@@ -54,15 +55,17 @@
               <div class="title title--small" data-clamp="2">
                 {{ recipe.name }}
               </div>
-              <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %} <span class="label label--gray" title="Rank improved by {{ rank_diff }} positions">▲{{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %} <span class="label label--gray" title="Rank dropped by {{ rank_diff_abs }} positions">▼{{ rank_diff_abs }}</span>{% endif %}</div>
+              <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %}
+                <span class="label label--gray ml--2" title="Rank improved by {{ rank_diff }} positions">▲  {{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %}
+                <span class="label label--gray ml--2" title="Rank dropped by {{ rank_diff_abs }} positions">▼  {{ rank_diff_abs }}</span>{% endif %}</div>
             </div>
             <div class="flex flex--col w--auto gap--none self--start w--min-12" style="align-items:stretch;margin-left:auto;">
               {% if delta > 0 %}
-              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" title="Gained {{ delta_abs }} popularity">▲ {{ delta_abs }}</div>
+              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" title="Gained {{ delta_abs }} popularity">➕ {{ delta_abs }}</div>
               <div class="label label--outline w--full" style="justify-content:center;" title="Total popularity: {{ total_popularity }}">{{ pop_display }}</div>
               {% elsif delta < 0 %}
               <div class="label label--outline w--full" style="justify-content:center;" data-value-fit="true" title="Total popularity: {{ total_popularity }}">{{ pop_display }}</div>
-              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" title="Lost {{ delta_abs }} popularity">▼ {{ delta_abs }}</div>
+              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" title="Lost {{ delta_abs }} popularity">➖ {{ delta_abs }}</div>
               {% else %}
               <div class="label label--outline w--full" style="justify-content:center;" title="Total popularity: {{ total_popularity }}">{{ pop_display }}</div>
               {% endif %}
@@ -92,14 +95,5 @@
   </div>
 </div>
 <style>
-.columns > .column + .column {
-  border-left: 1px solid gray;
-  padding-left: 8px;
-}
-.item--group-last {
-  border-bottom: 1px solid gray;
-  padding-bottom: 4px;
-  margin-bottom: 4px;
-}
 </style>
 {% endtemplate %}
