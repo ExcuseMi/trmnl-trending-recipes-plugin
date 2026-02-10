@@ -8,7 +8,7 @@
 
         {% if section == "user" %}
           {% unless user_recipes %}{% continue %}{% endunless %}
-          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %} · {{ user_stats.total_popularity }}{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+{{ us_delta }}){% elsif us_delta < 0 %} ({{ us_delta }}){% endif %}{% endif %}</span>
+          <span class="label label--medium" data-group-header="true">My Recipes{% if user_stats %} · <span class="m--1" data-fmt-number>{{ user_stats.total_popularity }}</span>{% assign us_delta = user_stats.popularity_delta | default: 0 %}{% if us_delta > 0 %} (+<span data-fmt-number>{{ us_delta }}</span>){% elsif us_delta < 0 %} (-<span data-fmt-number>{{ us_delta }}</span>){% endif %}{% endif %}</span>
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
@@ -21,18 +21,6 @@
         {% assign delta = recipe.popularity_delta | default: 0 %}
         {% assign delta_abs = delta | abs %}
         {% assign total_popularity = recipe.popularity | default: 0 %}
-        {% if total_popularity >= 1000 %}
-          {% assign pop_k = total_popularity | divided_by: 100 %}
-          {% assign pop_remainder = pop_k | modulo: 10 %}
-          {% assign pop_whole = pop_k | divided_by: 10 %}
-          {% if pop_remainder == 0 %}
-            {% capture pop_display %}{{ pop_whole }}k{% endcapture %}
-          {% else %}
-            {% capture pop_display %}{{ pop_whole }}.{{ pop_remainder }}k{% endcapture %}
-          {% endif %}
-        {% else %}
-          {% assign pop_display = total_popularity %}
-        {% endif %}
         {% assign recipe_age_days = recipe.recipe_age_days %}
         {% if recipe_age_days == nil or recipe_age_days == blank %}
         {% assign is_new_recipe = false %}
@@ -49,7 +37,7 @@
           <div class="item {% if section == "user" %}item--emphasis-2 {% endif %} {% if forloop.last %} item--group-last{% endif %}">
             <div class="meta"></div>
             <div class="icon self--start">
-            <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" />
+            <img class="image w--10 h--10" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
             </div>
             <div class="content pl--1 self--start">
               <div class="title title--small" data-clamp="2">
@@ -59,21 +47,21 @@
                 <span class="label label--gray ml--2">▲  {{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %}
                 <span class="label label--gray ml--2">▼  {{ rank_diff_abs }}</span>{% endif %}</div>
             </div>
-            <div class="flex flex--col w--auto gap--none self--start w--min-14" style="align-items:stretch;margin-left:auto;">
+            <div class="flex flex--col w--auto gap--none self--start w--min-14 delta-col">
               {% if delta > 0 %}
-              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true">
-<svg class="w--4 h--4 mr--1" fill="#ffffff" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" preserveAspectRatio="xMidYMid meet"><path d="M38 26V2H26v24H2v12h24v24h12V38h24V26z"></path></svg>
+              <div class="label label--inverted w--full label--center" data-value-fit="true">
+<svg class="w--4 h--4 mr--1" fill="#ffffff" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"><path d="M38 26V2H26v24H2v12h24v24h12V38h24V26z"></path></svg>
 {{ delta_abs }}</div>
-              <div class="label label--outline w--full" style="justify-content:center;" >{{ pop_display }}</div>
+              <div class="label label--outline w--full label--center"><span data-fmt-number>{{ total_popularity }}</span></div>
               {% elsif delta < 0 %}
-              <div class="label label--outline w--full" style="justify-content:center;" data-value-fit="true" >{{ pop_display }}</div>
-              <div class="label label--inverted w--full" style="justify-content:center;" data-value-fit="true" >
+              <div class="label label--outline w--full label--center" data-value-fit="true"><span data-fmt-number>{{ total_popularity }}</span></div>
+              <div class="label label--inverted w--full label--center" data-value-fit="true">
               <svg class="w--4 h--4 mr--1" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                 <rect x="4" y="10" width="16" height="4" rx="1"/>
               </svg>
                {{ delta_abs }}</div>
               {% else %}
-              <div class="label label--outline w--full" style="justify-content:center;">{{ pop_display }}</div>
+              <div class="label label--outline w--full label--center"><span data-fmt-number>{{ total_popularity }}</span></div>
               {% endif %}
             </div>
           </div>
@@ -89,10 +77,12 @@
     <path d="M5.5 5V19.5H20M7.5 16L11.5 11.5L15.5 14L19.5 8.5" stroke="#000000" stroke-width="1.2"/>
     </svg>
   <div class="title">{{trmnl.plugin_settings.instance_name}}
+  {% unless compact %}
   {% assign age = trmnl.plugin_settings.custom_fields_values.max_age_days | default: "0" %}
   {% unless age == "0" %} (last {% case age %}{% when "7" %}7 days{% when "14" %}14 days{% when "30" %}month{% when "90" %}3 months{% when "180" %}6 months{% when "365" %}year{% endcase %}){% endunless %}
+  {% endunless %}
   </div>
-  <div class="instance" title="Time period for trending calculation">
+  <div class="instance">
     {% assign tf = trmnl.plugin_settings.custom_fields_values.timeframe | default: "24h" %}
     {% case tf %}
       {% when "today" %}Today
@@ -102,10 +92,29 @@
       {% when "30d" %}Last 30 Days
       {% else %}{{ tf | upcase }}
     {% endcase %}
+    {% unless compact %}
     {% if global_stats %}·
-    {{ global_stats.total_connections }}{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+{{ gs_delta }}){% elsif gs_delta < 0 %} ({{ gs_delta }}){% endif %}{% endif %}
+    <span data-fmt-number>{{ global_stats.total_connections }}</span>{% assign gs_delta = global_stats.total_connections_delta | default: 0 %}{% if gs_delta > 0 %} (+<span data-fmt-number>{{ gs_delta }}</span>){% elsif gs_delta < 0 %} (-<span data-fmt-number>{{ gs_delta }}</span>){% endif %}{% endif %}
+    {% endunless %}
   </div>
 </div>
 <style>
+.delta-col { align-items: stretch; margin-left: auto; }
+.label--center { justify-content: center; }
 </style>
+<script>
+function fmtNum(n) {
+  var a = Math.abs(n);
+  if (a >= 1000) {
+    var w = Math.floor(a / 1000);
+    var r = Math.floor((a % 1000) / 100);
+    return r === 0 ? w + 'k' : w + '.' + r + 'k';
+  }
+  return '' + a;
+}
+document.querySelectorAll('[data-fmt-number]').forEach(function(el) {
+  var n = parseInt(el.textContent, 10);
+  if (!isNaN(n)) el.textContent = fmtNum(n);
+});
+</script>
 {% endtemplate %}

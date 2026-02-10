@@ -176,9 +176,9 @@ class TrendingCalculator:
             'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
         }
 
-        # Filter user_recipes: exclude popularity_delta == 0 unless include_unchanged
+        # Filter user_recipes: only trending up unless include_unchanged (show all)
         if not include_unchanged:
-            user_recipes_filtered = [r for r in user_recipes_all if r['popularity_delta'] != 0]
+            user_recipes_filtered = [r for r in user_recipes_all if r['popularity_delta'] > 0]
         else:
             user_recipes_filtered = list(user_recipes_all)
 
