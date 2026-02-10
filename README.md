@@ -3,10 +3,10 @@
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugin(s)
 
-*Last updated: 2026-02-10 15:42:14 UTC*
+*Last updated: 2026-02-10 15:45:08 UTC*
 
 
-## <img src="assets/plugin-images/241645_icon.png" alt="Trending Recipes icon" width="32"/> [Trending Recipes](https://usetrmnl.com/recipes/241645)
+## <img src="assets/plugin-images/241645_icon.svg" alt="Trending Recipes icon" width="32"/> [Trending Recipes](https://trmnl.com/recipes/241645)
 
 ![Trending Recipes screenshot](assets/plugin-images/241645_screenshot.png)
 
