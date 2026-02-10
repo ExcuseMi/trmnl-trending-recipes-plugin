@@ -18,6 +18,9 @@ class Database:
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self.schema_version = 4  # Current schema version
+        self._rank_cache = {}
+        self._rank_cache_timestamp = None
+        self._rank_cache_ttl = 60*60
 
     def get_connection(self) -> sqlite3.Connection:
         """Get or create database connection"""
@@ -761,98 +764,89 @@ class Database:
         return hours_since > max_hours
 
     def compute_global_ranks(self, timeframe: str, cutoff: datetime) -> Dict[str, Dict[str, int]]:
-        """Compute current global rank and rank improvement"""
-        # Get current rankings
+        """Compute current global rank and rank improvement with caching"""
+
+        # Check cache first
+        cache_key = f"{timeframe}_{cutoff.isoformat()}"
+        current_time = datetime.utcnow().timestamp()
+
+        if (cache_key in self._rank_cache and
+                current_time - self._rank_cache_timestamp < self._rank_cache_ttl):
+            return self._rank_cache[cache_key]
+
+        # Original calculation (simplified)
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # OPTIMIZATION 1: Use materialized CTE for better performance
         cursor.execute("""
-            SELECT id, popularity_score
-            FROM recipes
-            WHERE popularity_score > 0
-            ORDER BY popularity_score DESC
-        """)
-
-        current_recipes = cursor.fetchall()
-        current_ranks = {row['id']: rank + 1 for rank, row in enumerate(current_recipes)}
-
-        # Get popularity at cutoff time
-        cutoff_iso = cutoff.isoformat()
-
-        # Get ALL recipes that existed at cutoff time
-        cursor.execute("""
-            WITH historical_recipes AS (
-                SELECT DISTINCT recipe_id as id
-                FROM recipe_history
-                WHERE snapshot_timestamp <= ?
-                UNION
-                SELECT DISTINCT recipe_id as id
-                FROM recipe_hourly_snapshots
-                WHERE snapshot_timestamp <= ?
+            WITH current_ranked AS (
+                SELECT id, popularity_score,
+                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as current_rank
+                FROM recipes
+                WHERE popularity_score > 0
             ),
-            latest_popularity AS (
-                SELECT 
-                    rh.recipe_id as id,
-                    rh.popularity_score,
-                    rh.snapshot_timestamp
-                FROM recipe_history rh
-                WHERE rh.snapshot_timestamp = (
-                    SELECT MAX(snapshot_timestamp)
-                    FROM recipe_history rh2
-                    WHERE rh2.recipe_id = rh.recipe_id
-                    AND rh2.snapshot_timestamp <= ?
-                )
+            historical_snapshot AS (
+                SELECT recipe_id as id, popularity_score
+                FROM (
+                    SELECT 
+                        recipe_id,
+                        popularity_score,
+                        snapshot_timestamp,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY recipe_id 
+                            ORDER BY snapshot_timestamp DESC
+                        ) as rn
+                    FROM recipe_history
+                    WHERE snapshot_timestamp <= ?
+                ) WHERE rn = 1
                 UNION ALL
-                SELECT 
-                    rhs.recipe_id as id,
-                    rhs.popularity_score,
-                    rhs.snapshot_timestamp
-                FROM recipe_hourly_snapshots rhs
-                WHERE rhs.snapshot_timestamp = (
-                    SELECT MAX(snapshot_timestamp)
-                    FROM recipe_hourly_snapshots rhs2
-                    WHERE rhs2.recipe_id = rhs.recipe_id
-                    AND rhs2.snapshot_timestamp <= ?
-                )
-                AND NOT EXISTS (
-                    SELECT 1 FROM recipe_history rh3
-                    WHERE rh3.recipe_id = rhs.recipe_id
-                    AND rh3.snapshot_timestamp <= ?
-                )
+                SELECT recipe_id as id, popularity_score
+                FROM (
+                    SELECT 
+                        recipe_id,
+                        popularity_score,
+                        snapshot_timestamp,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY recipe_id 
+                            ORDER BY snapshot_timestamp DESC
+                        ) as rn
+                    FROM recipe_hourly_snapshots
+                    WHERE snapshot_timestamp <= ?
+                        AND NOT EXISTS (
+                            SELECT 1 FROM recipe_history rh2
+                            WHERE rh2.recipe_id = recipe_hourly_snapshots.recipe_id
+                              AND rh2.snapshot_timestamp <= ?
+                        )
+                ) WHERE rn = 1
+            ),
+            past_ranked AS (
+                SELECT id, 
+                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as past_rank
+                FROM historical_snapshot
+                WHERE popularity_score > 0
             )
-            SELECT id, popularity_score
-            FROM latest_popularity
-            WHERE popularity_score > 0
-            ORDER BY popularity_score DESC
-        """, (cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso, cutoff_iso))
+            SELECT 
+                cr.id,
+                cr.current_rank,
+                COALESCE(pr.past_rank, (SELECT COUNT(*) + 1 FROM past_ranked)) as past_rank
+            FROM current_ranked cr
+            LEFT JOIN past_ranked pr ON cr.id = pr.id
+        """, (cutoff_iso, cutoff_iso, cutoff_iso))
 
-        past_recipes = cursor.fetchall()
-
-        # Sort past recipes by popularity to get past ranks
-        past_sorted = sorted(past_recipes, key=lambda x: x['popularity_score'], reverse=True)
-        past_ranks = {row['id']: rank + 1 for rank, row in enumerate(past_sorted)}
-
-        # For recipes that exist now but didn't exist in the past, assign worst rank
-        total_past_recipes = len(past_sorted)
-        worst_past_rank = total_past_recipes + 1  # One worse than the worst ranked
-
-        # Compute result
+        # Build result
         result = {}
-        for recipe_id, current_rank in current_ranks.items():
-            past_rank = past_ranks.get(recipe_id)
-            if past_rank is None:
-                # Recipe didn't exist in the past - treat it as new with worst possible past rank
-                rank_improvement = worst_past_rank - current_rank
-            else:
-                rank_improvement = past_rank - current_rank
-
-            result[recipe_id] = {
-                'global_rank': current_rank,
-                'rank_difference': rank_improvement
+        for row in cursor.fetchall():
+            result[row['id']] = {
+                'global_rank': row['current_rank'],
+                'rank_difference': row['past_rank'] - row['current_rank']
             }
 
-        return result
+        # Cache the result
+        self._rank_cache[cache_key] = result
+        self._rank_cache_timestamp = current_time
 
+        return result
     def get_global_stats(self, cutoff: datetime, use_hourly: bool = False) -> Dict:
         """Get total connections (sum of popularity) now and at cutoff"""
         conn = self.get_connection()
