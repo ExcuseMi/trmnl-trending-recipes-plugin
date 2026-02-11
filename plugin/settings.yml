@@ -39,8 +39,6 @@ custom_fields:
   - This Week (since Monday): week
   - Last 24 Hours: 24h
   - Last 3 Days: 3d
-  - Last 7 Days: 7d
-  - Last 30 Days: 30d
 - keyname: show_summary
   field_type: select
   name: Developer Summary
