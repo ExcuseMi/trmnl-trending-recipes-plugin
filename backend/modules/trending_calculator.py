@@ -159,9 +159,11 @@ class TrendingCalculator:
         return {
             'recipes': trending_recipes,
             'global_stats': global_stats,
-            'timeframe': timeframe,
-            'timeframe_label': labels['long'],
-            'timeframe_short': labels['short'],
+            'timeframe': {
+                'key': timeframe,
+                'label': labels['long'],
+                'short': labels['short'],
+            },
         }
 
     def _calculate_dual_list(self, timeframe: str, timeframe_info: Dict, limit: int,
@@ -269,9 +271,11 @@ class TrendingCalculator:
             'recipes': final_global,
             'user_stats': user_stats,
             'global_stats': global_stats,
-            'timeframe': timeframe,
-            'timeframe_label': labels['long'],
-            'timeframe_short': labels['short'],
+            'timeframe': {
+                'key': timeframe,
+                'label': labels['long'],
+                'short': labels['short'],
+            },
         }
 
     def _calculate_calendar_trending(self, timeframe: str, limit: Optional[int],
