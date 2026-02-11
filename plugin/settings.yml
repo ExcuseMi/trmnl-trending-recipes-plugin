@@ -1,0 +1,60 @@
+---
+strategy: polling
+no_screen_padding: 'no'
+dark_mode: 'no'
+static_data: ''
+polling_verb: get
+polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.max_age_days != "0" %}&max_age_days={{trmnl.plugin_settings.custom_fields_values.max_age_days}}{% endif %}{% if trmnl.plugin_settings.custom_fields_values.view_mode == "user" %}&user_id={{trmnl.user.id}}&include_unchanged=false{% elsif trmnl.plugin_settings.custom_fields_values.view_mode == "user_all" %}&user_id={{trmnl.user.id}}&include_unchanged=true{% endif %}
+polling_headers: ''
+polling_body: ''
+id: 241645
+custom_fields:
+- keyname: author_bio
+  field_type: author_bio
+  name: About This Plugin
+  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs and forks over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes, personalized views to highlight your own recipes alongside public trends, and a developer summary showing your global rank and connection stats.<br /><br /><strong>Updates hourly.</strong>"
+  category: analytics
+  github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
+- keyname: view_mode
+  field_type: select
+  name: View Mode
+  description: "<strong>Public</strong> shows only community trends.<br /><strong>Mine + Public</strong> prioritizes your recipes first, then fills with public trends.<br /><strong>Mine (all) </strong> includes your unchanged recipes too."
+  default: public
+  options:
+  - Public: public
+  - Mine + Public: user
+  - Mine (all) + Public: user_all
+  conditional_validation:
+  - when: public
+    hidden:
+    - show_summary
+- keyname: timeframe
+  field_type: select
+  name: Timeframe
+  description: How far back to look when calculating trending recipes.
+  default: 24h
+  options:
+  - Today: today
+  - 24h: 24h
+  - 3 Days: 3d
+- keyname: show_summary
+  field_type: boolean
+  name: Developer Summary
+  description: "Show a summary card above your recipes with your total connections, growth delta, and global developer rank."
+  default: true
+  optional: false
+- keyname: max_age_days
+  field_type: select
+  name: Recipe Age
+  description: Only show recipes published within this period. Older recipes keep their global rank but won't appear in the list.
+  default: '0'
+  options:
+  - All: '0'
+  - Last 7 days: '7'
+  - Last 14 days: '14'
+  - Last month: '30'
+  - Last 3 months: '90'
+  - Last 6 months: '180'
+  - Last year: '365'
+name: Trending Recipes
+refresh_interval: 15

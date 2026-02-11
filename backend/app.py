@@ -74,7 +74,6 @@ def try_acquire_primary_worker():
     Uses a file lock to ensure only one worker runs background tasks.
     Returns True if this worker becomes primary.
     """
-    import fcntl
 
     try:
         # Try to create and lock the file
@@ -315,6 +314,12 @@ def get_trending():
     categories_param = request.args.get('categories', '').strip()
     categories_filter = [c.strip() for c in categories_param.split(',') if c.strip()] if categories_param else None
 
+    # Parse max recipe age filter (0 = no filter)
+    try:
+        max_age_days = int(request.args.get('max_age_days', '0'))
+    except ValueError:
+        max_age_days = 0
+
     try:
         # Resolve user_id to recipe_ids if requested
         user_id = request.args.get('user_id')
@@ -330,18 +335,17 @@ def get_trending():
                 user_recipe_ids=user_recipe_ids,
                 include_unchanged=include_unchanged,
                 categories_filter=categories_filter,
+                max_age_days=max_age_days,
+                user_id=user_id,
             )
 
-            trending_data['user_filter'] = {
-                'user_id': user_id,
-                'recipe_ids_count': len(user_recipe_ids),
-            }
         else:
             trending_data = trending_calculator.calculate_trending(
                 timeframe=timeframe,
                 limit=limit,
                 utc_offset_seconds=utc_offset,
                 categories_filter=categories_filter,
+                max_age_days=max_age_days,
             )
 
         return jsonify(trending_data)
@@ -408,6 +412,8 @@ def recipe_fetch_worker():
             recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
             duration = time.time() - start_time
             logger.info(f"✓ Startup fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+            if recipes_processed > 0:
+                db.refresh_materialized_views()
         except Exception as e:
             logger.error(f"✗ Startup fetch failed: {e}")
 
@@ -430,6 +436,8 @@ def recipe_fetch_worker():
             recipes_processed = asyncio.run(recipe_fetcher.fetch_all_recipes())
             duration = time.time() - start_time
             logger.info(f"✓ Hourly fetch complete: {recipes_processed} recipes in {duration:.1f}s")
+            if recipes_processed > 0:
+                db.refresh_materialized_views()
 
         except Exception as e:
             logger.error(f"✗ Recipe fetch worker error: {e}")
