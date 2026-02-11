@@ -32,7 +32,7 @@ custom_fields:
 - keyname: timeframe
   field_type: select
   name: Timeframe
-  description: "How far back to look when calculating trending recipes.<br /><strong>Today / This Week</strong> start from midnight/Monday in your timezone.<br /><strong>Rolling</strong> options look back a fixed number of hours from now."
+  description: How far back to look when calculating trending recipes.<br /><strong>Today / This Week</strong> start from midnight/Monday in your timezone.<br /><strong>Rolling</strong> options look back a fixed number of hours from now.
   default: 24h
   options:
   - Today (since midnight): today
@@ -65,7 +65,7 @@ custom_fields:
 - keyname: filter_user_age
   field_type: boolean
   name: Apply Age Filter to My Recipes
-  description: "When enabled, the Recipe Age filter also applies to your own recipes. When disabled, your recipes always show regardless of age."
+  description: When enabled, the Recipe Age filter also applies to your own recipes. When disabled, your recipes always show regardless of age.
   default: false
   optional: true
 name: Trending Recipes
