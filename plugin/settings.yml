@@ -38,11 +38,14 @@ custom_fields:
   - 24h: 24h
   - 3 Days: 3d
 - keyname: show_summary
-  field_type: boolean
+  field_type: select
   name: Developer Summary
-  description: "Show a summary card above your recipes with your total connections, growth delta, and global developer rank."
-  default: true
-  optional: false
+  description: "Where to display your connection stats, growth delta, and global developer rank."
+  options:
+  - Summary Card: card
+  - Title Bar: title_bar
+  - Hidden: hidden
+  default: card
 - keyname: max_age_days
   field_type: select
   name: Recipe Age
