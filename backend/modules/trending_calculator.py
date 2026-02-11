@@ -195,6 +195,7 @@ class TrendingCalculator:
         user_stats = {
             'total_popularity': sum(r['popularity'] for r in user_recipes_all),
             'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
+            'total_recipes': len(user_recipe_ids),
         }
 
         # Add developer rank if user_id is available

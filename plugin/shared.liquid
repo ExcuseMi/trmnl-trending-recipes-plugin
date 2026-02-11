@@ -1,3 +1,38 @@
+<svg width="0" height="0" style="position: absolute;">
+  <defs>
+    <filter id="binarize" color-interpolation-filters="linearRGB" filterUnits="objectBoundingBox" primitiveUnits="userSpaceOnUse">
+    <!-- Convert to grayscale -->
+    <feColorMatrix type="matrix"
+      values="0.0722 0.7152 0.2126 0 0
+              0.0722 0.7152 0.2126 0 0
+              0.0722 0.7152 0.2126 0 0
+              0      0      0      1 0"/>
+    <!-- Threshold: everything above 0.5 becomes white, below becomes black -->
+    <feComponentTransfer>
+      <feFuncR type="discrete" tableValues="0 0.25 0.75 1"/>
+      <feFuncG type="discrete" tableValues="0 0.25 0.75 1"/>
+      <feFuncB type="discrete" tableValues="0 0.25 0.75 1"/>
+    </feComponentTransfer>
+  </filter>
+  </defs>
+</svg>
+<style>
+.screen--1bit .binarize, .screen--2bit .binarize {
+  filter: url(#binarize);
+}
+.trmnl .item--emphasis-2 .meta .index {
+  -webkit-text-stroke-color: var(--gray-30);
+}
+.trmnl .item--emphasis-3 .meta .index {
+  -webkit-text-stroke-color: var(--black);
+}
+.line-height--small {
+  line-height: 0.9;
+}
+.line-height--xsmall {
+  line-height: 0.75;
+}
+</style>
 {% template main %}
 {% assign show_summary = trmnl.plugin_settings.custom_fields_values.show_summary | default: "true" %}
 <div class="layout layout--stretch">
@@ -15,31 +50,30 @@
               <div class="item stat-col">
                 <div class="meta"></div>
                 <div class="content">
-                  <span class="value value--xxsmall" data-value-fit="true" data-fmt-number>{{ user_stats.total_popularity }}</span>
+                  <div class="flex flex--row gap--small">
+                    <div class="value value--small line-height--xsmall">{{ user_stats.total_popularity | number_with_delimiter }}</div>
+                    {% assign us_delta = user_stats.popularity_delta | default: 0 %}
+                    {% if us_delta > 0 %}
+                    <div class="label label--inverted bg--gray-30 line-height--small px--1 pt--1 lg:py--0.5 lg:mb--0.5">+{{ us_delta | number_with_delimiter }}</div>
+                    {% elsif us_delta < 0 %}
+                    <div class="label label--outline line-height--small px--1 pt--1 lg:py--0.5 lg:mb--0.5">–{{ us_delta | abs | number_with_delimiter }}</div>
+                    {% endif %}
+                  </div>
                   <span class="label label--small">connections</span>
                 </div>
               </div>
               <div class="item stat-col">
                 <div class="meta"></div>
                 <div class="content">
-                  {% assign us_delta = user_stats.popularity_delta | default: 0 %}
-                  {% if us_delta > 0 %}
-                  <span class="value value--xxsmall" data-value-fit="true">+<span data-fmt-number>{{ us_delta }}</span></span>
-                  <span class="label label--small">gained</span>
-                  {% elsif us_delta < 0 %}
-                  <span class="value value--xxsmall" data-value-fit="true">-<span data-fmt-number>{{ us_delta | abs }}</span></span>
-                  <span class="label label--small">lost</span>
-                  {% else %}
-                  <span class="value value--xxsmall">--</span>
-                  <span class="label label--small">change</span>
-                  {% endif %}
+                  <div class="value value--small line-height--xsmall">{{ user_stats.total_recipes }}</div>
+                  <span class="label label--small">recipes</span>
                 </div>
               </div>
               {% if user_stats.developer_rank %}
               <div class="item stat-col">
                 <div class="meta"></div>
                 <div class="content">
-                  <span class="value value--xxsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
+                  <span class="value value--small line-height--xsmall" data-value-fit="true">#{{ user_stats.developer_rank }}</span>
                   <span class="label label--small">of {{ global_stats.total_developers }}</span>
                 </div>
               </div>
@@ -51,7 +85,7 @@
           {% assign items = user_recipes %}
         {% else %}
           {% if user_recipes %}
-          <span class="label label--medium" data-group-header="true">Trending</span>
+          <span class="label label--medium" data-group-header="true">Global</span>
           {% endif %}
           {% assign items = recipes %}
         {% endif %}
@@ -72,38 +106,40 @@
           {% endif %}
           {% assign rank_diff = recipe.rank_difference %}
           {% assign current_rank = recipe.global_rank | default: 0 %}
-          <div class="item {% if recipe.is_top_gainer %}item--emphasis-3 {% elsif section == "user" %}item--emphasis-2 {% endif %}{% if forloop.last %} item--group-last{% endif %}">
-            <div class="meta"></div>
-            <div class="icon self--start m--0">
-            <img class="image w--8 h--8" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
-            </div>
-            <div class="content pl--1 self--start">
-              <div class="title title--small" data-value-fit="true" data-clamp="2">
-                {{ recipe.name }}
-              </div>
-              <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %}
-                <span class="label label--gray ml--2">▲  {{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %}
-                <span class="label label--gray ml--2">▼  {{ rank_diff_abs }}</span>{% endif %}</div>
-            </div>
-            <div class="flex flex--col w--auto gap--none self--start w--min-14 delta-col">
-              {% if delta > 0 %}
-              <div class="label label--inverted w--full label--center" data-value-fit="true">
-<svg class="w--4 h--4 mr--1" fill="#ffffff" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"><path d="M38 26V2H26v24H2v12h24v24h12V38h24V26z"></path></svg>
-{{ delta_abs }}</div>
-              <div class="label label--outline w--full label--center"><span data-fmt-number>{{ total_popularity }}</span></div>
-              {% elsif delta < 0 %}
-              <div class="label label--outline w--full label--center" data-value-fit="true"><span data-fmt-number>{{ total_popularity }}</span></div>
-              <div class="label label--inverted w--full label--center" data-value-fit="true">
-              <svg class="w--4 h--4 mr--1" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                <rect x="4" y="10" width="16" height="4" rx="1"/>
-              </svg>
-               {{ delta_abs }}</div>
-              {% else %}
-              <div class="label label--outline w--full label--center"><span data-fmt-number>{{ total_popularity }}</span></div>
+  <div class="item {% if recipe.is_top_gainer %}item--emphasis-3{% elsif delta > 0 %}item--emphasis-2{% endif %}">
+    <div class="meta w--4"><span class="index">{{ recipe.trending_rank }}</span></div>
+    <div class="icon self--center">
+      <img class="image h--10 w--10 binarize" src="{% if recipe.icon_url %}{{recipe.icon_url}}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
+    </div>
+    <div class="flex flex--col flex--left gap--none stretch">
+        <div class="title title--small" data-clamp="2">{{ recipe.name }}</div>
+      <div class="flex flex--row flex--left gap--small">
+        <div class="flex flex--col flex--left gap--none">
+          <div class="value value--small line-height--xsmall">{{ total_popularity | number_with_delimiter }}</div>
+        </div>
+        <div class="flex flex--col flex--left gap--none">
+          {% if delta > 0 %}
+            <div class="label label--inverted bg--gray-30 line-height--small px--1 pt--1 lg:py--0.5 lg:mb--0.5">+{{ delta }}</div>
+          {% elsif delta < 0 %}
+            <div class="label label--outline line-height--small px--1 pt--1 lg:py--0.5 lg:mb--0.5">–{{ delta | abs }}</div>
+          {% else %}
+            <!-- <div class="label line-height--small mt--0.5">&nbsp;</div> -->
+          {% endif %}
+          <div class="description line-height--xsmall">
+            #{{ current_rank }}
+            {% if rank_diff != null %}
+              {% if rank_diff > 0 %}
+                &uarr;{{ rank_diff }}
+              {% elsif rank_diff < 0 %}
+                &darr;{{ rank_diff | abs }}
               {% endif %}
-            </div>
+            {% endif %}
           </div>
-        {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+          {% endfor %}
 
       {% endfor %}
 
@@ -128,24 +164,4 @@
     {% endcase %}
   </div>
 </div>
-<style>
-.delta-col { align-items: stretch; margin-left: auto; }
-.label--center { justify-content: center; }
-.stat-col { flex: 1; }
-</style>
-<script>
-function fmtNum(n) {
-  var a = Math.abs(n);
-  if (a >= 1000) {
-    var w = Math.floor(a / 1000);
-    var r = Math.floor((a % 1000) / 100);
-    return r === 0 ? w + 'k' : w + '.' + r + 'k';
-  }
-  return '' + a;
-}
-document.querySelectorAll('[data-fmt-number]').forEach(function(el) {
-  var n = parseInt(el.textContent, 10);
-  if (!isNaN(n)) el.textContent = fmtNum(n);
-});
-</script>
 {% endtemplate %}
