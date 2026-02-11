@@ -357,6 +357,8 @@ class TrendingCalculator:
         rank = 0
         prev_delta = None
         for r in trending_recipes:
+            if r['popularity_delta'] <= 0:
+                continue
             if r['popularity_delta'] != prev_delta:
                 rank += 1
                 prev_delta = r['popularity_delta']
