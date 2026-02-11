@@ -35,6 +35,22 @@ class TrendingCalculator:
         '1m': {'type': 'rolling', 'hours': 720, 'description': 'Last 30 days (alias for 30d)'},
         '6m': {'type': 'rolling', 'hours': 4320, 'description': 'Last 180 days (alias for 180d)'},
     }
+
+    # Display labels for templates
+    TIMEFRAME_LABELS = {
+        'today': {'short': 'Today', 'long': 'Today'},
+        'week': {'short': 'Week', 'long': 'This Week'},
+        '1h': {'short': '1h', 'long': 'Last Hour'},
+        '24h': {'short': '24h', 'long': 'Last 24 Hours'},
+        '3d': {'short': '3d', 'long': 'Last 3 Days'},
+        '7d': {'short': '7d', 'long': 'Last 7 Days'},
+        '30d': {'short': '30d', 'long': 'Last 30 Days'},
+        '180d': {'short': '180d', 'long': 'Last 180 Days'},
+        '1d': {'short': '24h', 'long': 'Last 24 Hours'},
+        '1w': {'short': '7d', 'long': 'Last 7 Days'},
+        '1m': {'short': '30d', 'long': 'Last 30 Days'},
+        '6m': {'short': '180d', 'long': 'Last 180 Days'},
+    }
     def __init__(self, database):
         self.database = database
 
@@ -139,9 +155,13 @@ class TrendingCalculator:
         # Strip internal-only fields
         trending_recipes = [self._strip_recipe(r) for r in trending_recipes]
 
+        labels = self.TIMEFRAME_LABELS.get(timeframe, {'short': timeframe, 'long': timeframe})
         return {
             'recipes': trending_recipes,
             'global_stats': global_stats,
+            'timeframe': timeframe,
+            'timeframe_label': labels['long'],
+            'timeframe_short': labels['short'],
         }
 
     def _calculate_dual_list(self, timeframe: str, timeframe_info: Dict, limit: int,
@@ -243,11 +263,15 @@ class TrendingCalculator:
         final_user = [self._strip_recipe(r) for r in final_user]
         final_global = [self._strip_recipe(r) for r in final_global]
 
+        labels = self.TIMEFRAME_LABELS.get(timeframe, {'short': timeframe, 'long': timeframe})
         return {
             'user_recipes': final_user,
             'recipes': final_global,
             'user_stats': user_stats,
             'global_stats': global_stats,
+            'timeframe': timeframe,
+            'timeframe_label': labels['long'],
+            'timeframe_short': labels['short'],
         }
 
     def _calculate_calendar_trending(self, timeframe: str, limit: Optional[int],

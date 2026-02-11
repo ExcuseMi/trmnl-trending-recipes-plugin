@@ -32,12 +32,15 @@ custom_fields:
 - keyname: timeframe
   field_type: select
   name: Timeframe
-  description: How far back to look when calculating trending recipes.
+  description: "How far back to look when calculating trending recipes.<br /><strong>Today / This Week</strong> start from midnight/Monday in your timezone.<br /><strong>Rolling</strong> options look back a fixed number of hours from now."
   default: 24h
   options:
-  - Today: today
-  - 24h: 24h
-  - 3 Days: 3d
+  - Today (since midnight): today
+  - This Week (since Monday): week
+  - Last 24 Hours: 24h
+  - Last 3 Days: 3d
+  - Last 7 Days: 7d
+  - Last 30 Days: 30d
 - keyname: show_summary
   field_type: select
   name: Developer Summary

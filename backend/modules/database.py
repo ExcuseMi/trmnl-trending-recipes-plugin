@@ -368,7 +368,8 @@ class Database:
         conn.commit()
 
     def save_snapshot(self, recipe_id: str, installs: int, forks: int):
-        """Save a daily snapshot of recipe stats using UTC"""
+        """Save a daily snapshot of recipe stats using UTC.
+        Only inserts if no entry exists for that day (keeps earliest snapshot)."""
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -379,15 +380,10 @@ class Database:
         popularity_score = installs + forks
 
         cursor.execute("""
-            INSERT INTO recipe_history (
+            INSERT OR IGNORE INTO recipe_history (
                 recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp
             )
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(recipe_id, snapshot_date) DO UPDATE SET
-                installs = excluded.installs,
-                forks = excluded.forks,
-                popularity_score = excluded.popularity_score,
-                snapshot_timestamp = excluded.snapshot_timestamp
         """, (recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp))
 
         conn.commit()
@@ -584,13 +580,38 @@ class Database:
         logger.debug(f"💾 Saved hourly snapshot for recipe {recipe_id} at {snapshot_hour}")
 
     def cleanup_hourly_snapshots(self, hours_to_keep: int = 24 * 30):  # Keep 30 days by default
-        """Remove old hourly snapshots beyond retention period"""
+        """Promote earliest hourly snapshot per recipe per day to daily history,
+        then delete all hourly snapshots beyond the retention period."""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cutoff = datetime.utcnow() - timedelta(hours=hours_to_keep)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
+        # Promote earliest hourly snapshot per recipe per day into recipe_history
+        cursor.execute("""
+            INSERT OR IGNORE INTO recipe_history (
+                recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp
+            )
+            SELECT recipe_id, installs, forks, popularity_score,
+                   date(snapshot_timestamp) as snapshot_date,
+                   snapshot_timestamp
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY recipe_id, date(snapshot_timestamp)
+                        ORDER BY snapshot_timestamp ASC
+                    ) as rn
+                FROM recipe_hourly_snapshots
+                WHERE snapshot_timestamp < ?
+            ) WHERE rn = 1
+        """, (cutoff_iso,))
+
+        promoted = cursor.rowcount
+        if promoted > 0:
+            logger.info(f"📦 Promoted {promoted} earliest hourly snapshots to daily history")
+
+        # Now safely delete all old hourly snapshots
         cursor.execute("""
             DELETE FROM recipe_hourly_snapshots
             WHERE snapshot_timestamp < ?
