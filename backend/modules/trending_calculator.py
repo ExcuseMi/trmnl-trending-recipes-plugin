@@ -272,8 +272,9 @@ class TrendingCalculator:
         else:
             raise ValueError(f"Unknown calendar timeframe: {timeframe}")
 
-        # Get recipes with delta since cutoff
-        recipes = self.database.get_recipes_with_delta_since(cutoff, recipe_ids=recipe_ids)
+        # Convert cutoff to hours ago and use hourly snapshots for better granularity
+        hours_ago = max(1, int((now_utc - cutoff).total_seconds() / 3600))
+        recipes = self.database.get_recipes_with_delta_since_hours(hours_ago, recipe_ids=recipe_ids)
 
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
                                               cutoff_iso=cutoff.isoformat(),
