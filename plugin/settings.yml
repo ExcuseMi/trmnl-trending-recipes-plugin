@@ -12,7 +12,7 @@ custom_fields:
 - keyname: author_bio
   field_type: author_bio
   name: About This Plugin
-  description: "See what's trending in the TRMNL recipe community. Tracks recipe installs and forks over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes, personalized views to highlight your own recipes alongside public trends, and a developer summary showing your global rank and connection stats.<br /><br /><strong>Updates hourly.</strong>"
+  description: 'See what''s trending in the TRMNL recipe community. Tracks recipe installs and forks over time and surfaces the ones gaining momentum.<br /><br />Supports multiple timeframes, personalized views to highlight your own recipes alongside public trends, and a developer summary showing your global rank and connection stats.<br /><br /><strong>Updates hourly.</strong><br /><br />Styling help by <a href="https://trmnl.com/recipes?user_id=934" target="_blank">L #1385</a>.<br />Icons by <a href="https://www.svgrepo.com/" target="_blank">SVG Repo</a>.'
   category: analytics
   github_url: https://github.com/ExcuseMi/trmnl-trending-recipes-plugin
 - keyname: view_mode
@@ -40,12 +40,13 @@ custom_fields:
 - keyname: show_summary
   field_type: select
   name: Developer Summary
-  description: "Where to display your connection stats, growth delta, and global developer rank."
+  description: Where to display your connection stats, growth delta, and global developer rank.
   options:
   - Summary Card: card
   - Title Bar: title_bar
   - Hidden: hidden
   default: card
+  optional: true
 - keyname: max_age_days
   field_type: select
   name: Recipe Age
