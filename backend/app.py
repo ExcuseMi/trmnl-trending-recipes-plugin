@@ -320,6 +320,8 @@ def get_trending():
     except ValueError:
         max_age_days = 0
 
+    filter_user_age = request.args.get('filter_user_age', 'false').lower() == 'true'
+
     try:
         # Resolve user_id to recipe_ids if requested
         user_id = request.args.get('user_id')
@@ -336,6 +338,7 @@ def get_trending():
                 include_unchanged=include_unchanged,
                 categories_filter=categories_filter,
                 max_age_days=max_age_days,
+                filter_user_age=filter_user_age,
                 user_id=user_id,
             )
 

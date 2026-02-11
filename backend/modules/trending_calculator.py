@@ -45,6 +45,7 @@ class TrendingCalculator:
                            include_unchanged: bool = False,
                            categories_filter: Optional[List[str]] = None,
                            max_age_days: int = 0,
+                           filter_user_age: bool = False,
                            user_id: Optional[str] = None) -> Dict:
         """
         Calculate trending recipes for a given timeframe
@@ -82,7 +83,7 @@ class TrendingCalculator:
             return self._calculate_dual_list(
                 timeframe, timeframe_info, limit, utc_offset_seconds, cutoff,
                 user_recipe_ids, include_unchanged, categories_filter, max_age_days,
-                user_id=user_id
+                filter_user_age=filter_user_age, user_id=user_id
             )
 
         # Single-list mode (original behavior)
@@ -149,6 +150,7 @@ class TrendingCalculator:
                              include_unchanged: bool,
                              categories_filter: Optional[List[str]],
                              max_age_days: int = 0,
+                             filter_user_age: bool = False,
                              user_id: Optional[str] = None) -> Dict:
         """Calculate trending with dual-list mode: user_recipes + global recipes"""
 
@@ -210,12 +212,17 @@ class TrendingCalculator:
         else:
             user_recipes_filtered = list(user_recipes_all)
 
-        # Apply age filter to global recipes only (user's own always show)
+        # Apply age filter
         if max_age_days > 0:
             global_recipes = [
                 r for r in global_recipes
                 if r.get('recipe_age_days', 0) <= max_age_days
             ]
+            if filter_user_age:
+                user_recipes_filtered = [
+                    r for r in user_recipes_filtered
+                    if r.get('recipe_age_days', 0) <= max_age_days
+                ]
 
         # Sort: user_recipes by popularity_delta DESC, global by trending_score DESC
         user_recipes_filtered.sort(key=lambda x: x['popularity_delta'], reverse=True)
