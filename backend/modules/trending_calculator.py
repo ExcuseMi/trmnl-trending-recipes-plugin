@@ -121,9 +121,14 @@ class TrendingCalculator:
         # Apply limit
         trending_recipes = trending_recipes[:limit]
 
-        # Flag top gainer
+        # Flag top gainer(s)
         if trending_recipes and trending_recipes[0]['popularity_delta'] > 0:
-            trending_recipes[0]['is_top_gainer'] = True
+            top_delta = trending_recipes[0]['popularity_delta']
+            for r in trending_recipes:
+                if r['popularity_delta'] == top_delta:
+                    r['is_top_gainer'] = True
+                else:
+                    break
 
         # Global stats
         use_hourly = timeframe_info['type'] == 'rolling'
@@ -172,9 +177,14 @@ class TrendingCalculator:
                 r for r in all_recipes
                 if any(c in categories_filter for c in r.get('categories', []))
             ]
-        # Flag top gainer
+        # Flag top gainer(s)
         if all_recipes and all_recipes[0]['popularity_delta'] > 0:
-            all_recipes[0]['is_top_gainer'] = True
+            top_delta = all_recipes[0]['popularity_delta']
+            for r in all_recipes:
+                if r['popularity_delta'] == top_delta:
+                    r['is_top_gainer'] = True
+                else:
+                    break
         # Partition into user_recipes and global_recipes
         user_id_set = set(user_recipe_ids)
         user_recipes_all = [r for r in all_recipes if r['id'] in user_id_set]
@@ -343,6 +353,15 @@ class TrendingCalculator:
         else:
             trending_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
+        # Assign trending_rank (dense ranking — tied deltas share the same rank)
+        rank = 0
+        prev_delta = None
+        for r in trending_recipes:
+            if r['popularity_delta'] != prev_delta:
+                rank += 1
+                prev_delta = r['popularity_delta']
+            r['trending_rank'] = rank
+
         # Apply limit (None means no limit, for dual-list code path)
         if limit is not None:
             return trending_recipes[:limit]
@@ -350,7 +369,7 @@ class TrendingCalculator:
 
     _DISPLAY_FIELDS = {'name', 'icon_url', 'popularity', 'popularity_delta',
                        'recipe_age_days', 'global_rank', 'rank_difference',
-                       'is_top_gainer'}
+                       'is_top_gainer', 'trending_rank'}
 
     def _strip_recipe(self, recipe: Dict) -> Dict:
         """Keep only fields used by the liquid templates"""
