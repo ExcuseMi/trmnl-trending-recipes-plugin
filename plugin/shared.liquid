@@ -102,7 +102,17 @@
 {% assign show_summary = trmnl.plugin_settings.custom_fields_values.show_summary | default: "card" %}
 {% assign layout = trmnl.plugin_settings.custom_fields_values.layout | default: "classic" %}
 <div class="layout layout--stretch">
-  <div class="columns" data-overflow-max-cols="{{columns}}">
+  <div class="columns" data-overflow-max-cols="{{columns}}"
+    {% if portrait_columns | default: 0 > 0 %}
+     data-overflow-max-cols-portrait="{{portrait_columns}}"
+    {% endif %}
+        {% if lg_columns | default: 0 > 0 %}
+     data-overflow-max-cols-lg="{{lg_columns}}"
+    {% endif %}
+    {% if lg_portrait_columns | default: 0 > 0 %}
+     data-overflow-max-cols-lg-portrait="{{lg_portrait_columns}}"
+    {% endif %}
+    >
     <div class="column">
       {% assign sections = "user,global" | split: "," %}
       {% for section in sections %}
