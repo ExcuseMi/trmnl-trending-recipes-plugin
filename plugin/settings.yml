@@ -39,6 +39,14 @@ custom_fields:
   - This Week (since Monday): week
   - Last 24 Hours: 24h
   - Last 3 Days: 3d
+- keyname: layout
+  field_type: select
+  name: Layout
+  description: "<strong>Classic</strong> has larger, right-aligned numbers that are easy to scan.<br /><strong>Modern</strong> uses a compact inline layout with trending ranks."
+  default: classic
+  options:
+  - Classic: classic
+  - Modern: modern
 - keyname: show_summary
   field_type: select
   name: Developer Summary
