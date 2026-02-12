@@ -4,7 +4,7 @@ no_screen_padding: 'no'
 dark_mode: 'no'
 static_data: ''
 polling_verb: get
-polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.max_age_days != "0" %}&max_age_days={{trmnl.plugin_settings.custom_fields_values.max_age_days}}{% endif %}{% if trmnl.plugin_settings.custom_fields_values.filter_user_age == "true" %}&filter_user_age=true{% endif %}{% if trmnl.plugin_settings.custom_fields_values.view_mode == "user" %}&user_id={{trmnl.user.id}}&include_unchanged=false{% elsif trmnl.plugin_settings.custom_fields_values.view_mode == "user_all" %}&user_id={{trmnl.user.id}}&include_unchanged=true{% endif %}
+polling_url: https://trmnl.bettens.dev/trending-recipes/trending?timeframe={{timeframe}}&limit=50&utc_offset={{trmnl.user.utc_offset}}{% if trmnl.plugin_settings.custom_fields_values.max_age_days != "0" %}&max_age_days={{trmnl.plugin_settings.custom_fields_values.max_age_days}}{% endif %}{% if trmnl.plugin_settings.custom_fields_values.filter_user_age == "true" %}&filter_user_age=true{% endif %}{% if trmnl.plugin_settings.custom_fields_values.view_mode == "user" %}&user_id={{trmnl.user.id}}&include_unchanged=false{% elsif trmnl.plugin_settings.custom_fields_values.view_mode == "user_all" %}&user_id={{trmnl.user.id}}&include_unchanged=true{% endif %}{% assign ul = trmnl.plugin_settings.custom_fields_values.user_limit %}{% if ul != blank and ul != "0" %}&user_limit={{ul}}{% endif %}
 polling_headers: ''
 polling_body: ''
 id: 241645
@@ -29,6 +29,7 @@ custom_fields:
     hidden:
     - show_summary
     - filter_user_age
+    - user_limit
 - keyname: timeframe
   field_type: select
   name: Timeframe
@@ -47,6 +48,7 @@ custom_fields:
   options:
   - Classic: classic
   - Modern: modern
+  optional: true
 - keyname: show_summary
   field_type: select
   name: Developer Summary
@@ -70,11 +72,20 @@ custom_fields:
   - Last 3 months: '90'
   - Last 6 months: '180'
   - Last year: '365'
+
 - keyname: filter_user_age
   field_type: boolean
   name: Apply Age Filter to My Recipes
   description: When enabled, the Recipe Age filter also applies to your own recipes. When disabled, your recipes always show regardless of age.
   default: false
   optional: true
+- keyname: user_limit
+  field_type: number
+  name: My Recipes Limit
+  description: Maximum number of your own recipes to show. The remaining slots are filled with public trends. Leave empty or 0 for no limit.
+  min: 0
+  max: 50
+  optional: true
+  placeholder: 0
 name: Trending Recipes
 refresh_interval: 15
