@@ -62,7 +62,8 @@ class TrendingCalculator:
                            categories_filter: Optional[List[str]] = None,
                            max_age_days: int = 0,
                            filter_user_age: bool = False,
-                           user_id: Optional[str] = None) -> Dict:
+                           user_id: Optional[str] = None,
+                           user_limit: int = 0) -> Dict:
         """
         Calculate trending recipes for a given timeframe
 
@@ -99,7 +100,8 @@ class TrendingCalculator:
             return self._calculate_dual_list(
                 timeframe, timeframe_info, limit, utc_offset_seconds, cutoff,
                 user_recipe_ids, include_unchanged, categories_filter, max_age_days,
-                filter_user_age=filter_user_age, user_id=user_id
+                filter_user_age=filter_user_age, user_id=user_id,
+                user_limit=user_limit,
             )
 
         # Single-list mode (original behavior)
@@ -173,7 +175,8 @@ class TrendingCalculator:
                              categories_filter: Optional[List[str]],
                              max_age_days: int = 0,
                              filter_user_age: bool = False,
-                             user_id: Optional[str] = None) -> Dict:
+                             user_id: Optional[str] = None,
+                             user_limit: int = 0) -> Dict:
         """Calculate trending with dual-list mode: user_recipes + global recipes"""
 
         # Fetch ALL recipes (no filter)
@@ -252,7 +255,8 @@ class TrendingCalculator:
         global_recipes.sort(key=lambda x: x['trending_score'], reverse=True)
 
         # Apply limit: user_recipes first, fill remaining with global_recipes
-        final_user = user_recipes_filtered[:limit]
+        effective_user_limit = user_limit if user_limit > 0 else limit
+        final_user = user_recipes_filtered[:effective_user_limit]
         remaining = max(0, limit - len(final_user))
         final_global = global_recipes[:remaining]
 
