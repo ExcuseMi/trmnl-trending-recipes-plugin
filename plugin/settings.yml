@@ -72,7 +72,6 @@ custom_fields:
   - Last 3 months: '90'
   - Last 6 months: '180'
   - Last year: '365'
-
 - keyname: filter_user_age
   field_type: boolean
   name: Apply Age Filter to My Recipes
