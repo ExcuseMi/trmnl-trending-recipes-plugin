@@ -3,7 +3,7 @@
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugin(s)
 
-*Last updated: 2026-02-12 06:59:01 UTC*
+*Last updated: 2026-02-13 06:56:36 UTC*
 
 
 ## <img src="assets/plugin-images/241645_icon.svg" alt="Trending Recipes icon" width="32"/> [Trending Recipes](https://trmnl.com/recipes/241645)
@@ -18,7 +18,7 @@ See what's trending in the TRMNL recipe community. Tracks recipe installs and fo
 | Metric | Value |
 |--------|-------|
 | Installs | 1 |
-| Forks | 11 |
+| Forks | 13 |
 
 ---
 
