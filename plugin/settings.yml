@@ -40,6 +40,7 @@ custom_fields:
   - This Week (since Monday): week
   - Last 24 Hours: 24h
   - Last 3 Days: 3d
+  - Last Week: 7d
 - keyname: layout
   field_type: select
   name: Layout
