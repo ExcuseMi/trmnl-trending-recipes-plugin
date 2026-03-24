@@ -21,6 +21,8 @@ from modules.database import Database
 from modules.recipe_fetcher import RecipeFetcher
 from modules.trending_calculator import TrendingCalculator
 
+HOURS_TO_KEEP = 24 * 7
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -386,7 +388,7 @@ def initialize():
 
     # Initialize database (all workers need this)
     db.initialize()
-    db.cleanup_hourly_snapshots(hours_to_keep=24 * 7)
+    db.cleanup_hourly_snapshots(hours_to_keep=HOURS_TO_KEEP)
     db.log_table_stats()
 
     # Determine if this worker should run background jobs
@@ -474,7 +476,7 @@ def snapshot_cleanup_worker():
             # Run cleanup at midnight
             logger.info("🗑️  Running midnight cleanup...")
             start_time = time.time()
-            hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=24 * 7)
+            hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=HOURS_TO_KEEP)
             duration = time.time() - start_time
 
             if hourly_deleted > 0:
