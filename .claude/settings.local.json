@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:trmnl.com)",
       "Bash(python -m py_compile:*)",
-      "WebFetch(domain:context7.com)"
+      "WebFetch(domain:context7.com)",
+      "Bash(python -m pytest tests/test_trending.py -v)",
+      "Bash(pip install:*)"
     ]
   }
 }
