@@ -17,7 +17,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.schema_version = 5  # Current schema version
+        self.schema_version = 6  # Current schema version
         self._rank_cache = {}
         self._rank_cache_timestamp = None
         self._rank_cache_ttl = 60*60
@@ -192,6 +192,29 @@ class Database:
             logger.error(f"✗ Schema migration failed: {e}")
             raise
 
+    def _migrate_from_v5_to_v6(self):
+        """Migrate database from schema version 5 to 6 - add is_active flag to recipes"""
+        logger.info("🔧 Migrating database schema from v5 to v6...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("PRAGMA table_info(recipes)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'is_active' not in columns:
+                logger.info("  ✓ Adding is_active column to recipes table...")
+                cursor.execute("ALTER TABLE recipes ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipes_active ON recipes(is_active)")
+
+            conn.commit()
+            logger.info("✓ Schema migration to v6 completed")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
+
     def _migrate_from_v4_to_v5(self):
         """Migrate database from schema version 4 to 5 - add materialized view tables for ranks"""
         logger.info("🔧 Migrating database schema from v4 to v5...")
@@ -318,6 +341,10 @@ class Database:
             self._migrate_from_v4_to_v5()
             self._set_schema_version(5)
 
+        if current_version < 6:
+            self._migrate_from_v5_to_v6()
+            self._set_schema_version(6)
+
         logger.info("✓ Database schema initialized and up to date")
 
     def upsert_recipe(self, recipe_data: Dict):
@@ -332,9 +359,9 @@ class Database:
             INSERT INTO recipes (
                 id, name, description, installs, forks,
                 popularity_score, url, icon_url, thumbnail_url, created_at,
-                updated_at, last_fetched, user_id, categories
+                updated_at, last_fetched, user_id, categories, is_active
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -347,7 +374,8 @@ class Database:
                 updated_at = excluded.updated_at,
                 last_fetched = excluded.last_fetched,
                 user_id = excluded.user_id,
-                categories = excluded.categories
+                categories = excluded.categories,
+                is_active = 1
         """, (
             recipe_data['id'],
             recipe_data.get('name'),
@@ -366,6 +394,26 @@ class Database:
         ))
 
         conn.commit()
+
+    def mark_inactive_recipes(self, seen_ids: List[str]):
+        """Mark recipes not seen in the latest poll as inactive"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if not seen_ids:
+            return
+
+        placeholders = ','.join('?' * len(seen_ids))
+        cursor.execute(f"""
+            UPDATE recipes SET is_active = 0
+            WHERE id NOT IN ({placeholders}) AND is_active = 1
+        """, seen_ids)
+
+        deactivated = cursor.rowcount
+        conn.commit()
+
+        if deactivated > 0:
+            logger.info(f"🔕 Marked {deactivated} recipes as inactive (not seen in latest poll)")
 
     def save_snapshot(self, recipe_id: str, installs: int, forks: int):
         """Save a daily snapshot of recipe stats using UTC.
@@ -741,11 +789,11 @@ class Database:
                 r.thumbnail_url,
                 r.created_at,
                 r.user_id,
-                COALESCE(h.installs, 0) as past_installs,
-                COALESCE(h.forks, 0) as past_forks,
-                COALESCE(h.popularity_score, 0) as past_popularity,
-                h.snapshot_timestamp as past_snapshot_timestamp,
-                CASE WHEN h.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
+                COALESCE(h.installs, dh.installs, 0) as past_installs,
+                COALESCE(h.forks, dh.forks, 0) as past_forks,
+                COALESCE(h.popularity_score, dh.popularity_score, 0) as past_popularity,
+                COALESCE(h.snapshot_timestamp, dh.snapshot_timestamp) as past_snapshot_timestamp,
+                CASE WHEN h.snapshot_timestamp IS NOT NULL OR dh.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
             LEFT JOIN (
                 SELECT DISTINCT
@@ -761,15 +809,30 @@ class Database:
                 FROM recipe_hourly_snapshots
                 WHERE snapshot_timestamp <= ?
             ) h ON r.id = h.recipe_id AND h.rn = 1
+            LEFT JOIN (
+                SELECT DISTINCT
+                    recipe_id,
+                    installs,
+                    forks,
+                    popularity_score,
+                    snapshot_timestamp,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY recipe_id
+                        ORDER BY snapshot_timestamp DESC
+                    ) as rn
+                FROM recipe_history
+                WHERE snapshot_timestamp <= ?
+            ) dh ON r.id = dh.recipe_id AND dh.rn = 1
+            WHERE r.is_active = 1
         """
 
-        params: list = [cutoff_iso]
+        params: list = [cutoff_iso, cutoff_iso]
 
         if recipe_ids is not None:
             if not recipe_ids:
                 return []
             placeholders = ','.join('?' * len(recipe_ids))
-            query += f" WHERE r.id IN ({placeholders})"
+            query += f" AND r.id IN ({placeholders})"
             params.extend(recipe_ids)
 
         query += " ORDER BY r.popularity_score DESC"
@@ -829,7 +892,7 @@ class Database:
                        ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE popularity_score > 0
+                WHERE popularity_score > 0 AND is_active = 1
             """, (now,))
             recipe_count = cursor.rowcount
 
@@ -842,7 +905,7 @@ class Database:
                        ROW_NUMBER() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE user_id IS NOT NULL AND popularity_score > 0
+                WHERE user_id IS NOT NULL AND popularity_score > 0 AND is_active = 1
                 GROUP BY user_id
             """, (now,))
             user_count = cursor.rowcount

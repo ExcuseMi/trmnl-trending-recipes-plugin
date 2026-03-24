@@ -356,12 +356,15 @@ class TrendingCalculator:
             published_at_str = recipe.get('created_at')
             recipe_age_days = self._calculate_recipe_age_days(published_at_str) if published_at_str else 0
 
+            has_history = recipe.get('has_history', False)
+            popularity_delta = (recipe['current_popularity'] - recipe.get('past_popularity', 0)) if has_history else 0
+
             trending_score = self._calculate_trending_score_for_period(
                 {
                     'id': recipe['id'],
                     'popularity': recipe['current_popularity'],
-                    'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
-                    'has_historical_data': recipe.get('has_history', False),
+                    'popularity_delta': popularity_delta,
+                    'has_historical_data': has_history,
                     'recipe_age_days': recipe_age_days,  # Pass calculated age
                     'published_at': published_at_str  # Pass raw string too
                 },
@@ -383,7 +386,7 @@ class TrendingCalculator:
                 'categories': categories_list,
                 'icon_url': recipe['icon_url'],
                 'popularity': recipe['current_popularity'],
-                'popularity_delta': recipe['current_popularity'] - recipe.get('past_popularity', 0),
+                'popularity_delta': popularity_delta,
                 'trending_score': trending_score,
                 'recipe_age_days': int(recipe_age_days)
             })
@@ -410,7 +413,7 @@ class TrendingCalculator:
             return trending_recipes[:limit]
         return trending_recipes
 
-    _DISPLAY_FIELDS = {'name', 'icon_url', 'popularity', 'popularity_delta',
+    _DISPLAY_FIELDS = {'id', 'name', 'icon_url', 'popularity', 'popularity_delta',
                        'recipe_age_days', 'global_rank', 'rank_difference',
                        'is_top_gainer', 'trending_rank'}
 

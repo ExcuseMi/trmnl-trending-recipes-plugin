@@ -81,6 +81,7 @@ class RecipeFetcher:
         recipes_processed = 0
         page = 1
         total_recipes = None
+        seen_ids = []
 
         logger.info("📥 Starting recipe fetch from TRMNL API...")
 
@@ -108,6 +109,7 @@ class RecipeFetcher:
 
                             # Update current state
                             self.database.upsert_recipe(recipe)
+                            seen_ids.append(recipe['id'])
 
                             # Save hourly snapshot
                             self.database.save_hourly_snapshot(
@@ -152,6 +154,10 @@ class RecipeFetcher:
                 except Exception as e:
                     logger.error(f"✗ Error on page {page}: {e}")
                     break
+
+        # Mark any recipe not returned by the API this poll as inactive
+        if seen_ids:
+            self.database.mark_inactive_recipes(seen_ids)
 
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"✓ Recipe fetch complete: {recipes_processed} recipes in {duration:.1f}s")

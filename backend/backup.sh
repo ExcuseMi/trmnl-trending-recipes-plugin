@@ -3,7 +3,7 @@
 BACKUP_DIR="/backups"
 DB_PATH="/data/recipes.db"
 CHECK_INTERVAL=3600          # seconds between checks (1 hour)
-RETENTION_DAYS="${RETENTION_DAYS:-7}"
+RETENTION_DAYS="${RETENTION_DAYS:-10}"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -21,7 +21,7 @@ while true; do
         echo "[$(date)] Backup created: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
 
         # Prune backups older than 7 days
-        DELETED=$(find "$BACKUP_DIR" -name "recipes_*.db" -mtime +$RETENTION_DAYS -print -delete)
+        DELETED=$(find "$BACKUP_DIR" -name "recipes_*.db" -mtime +$((RETENTION_DAYS - 1)) -print -delete)
         if [ -n "$DELETED" ]; then
             echo "[$(date)] Pruned old backups:"
             echo "$DELETED"
