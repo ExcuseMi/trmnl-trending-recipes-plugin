@@ -473,7 +473,7 @@ def snapshot_cleanup_worker():
             # Run cleanup at midnight
             logger.info("🗑️  Running midnight cleanup...")
             start_time = time.time()
-            hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=24 * 30)
+            hourly_deleted = db.cleanup_hourly_snapshots(hours_to_keep=24 * 7)
             duration = time.time() - start_time
 
             if hourly_deleted > 0:

@@ -646,7 +646,7 @@ class Database:
         conn.commit()
         logger.debug(f"💾 Saved hourly snapshot for recipe {recipe_id} at {snapshot_hour}")
 
-    def cleanup_hourly_snapshots(self, hours_to_keep: int = 24 * 30):  # Keep 30 days by default
+    def cleanup_hourly_snapshots(self, hours_to_keep: int = 24 * 7):  # Keep 7 days by default
         """Promote earliest hourly snapshot per recipe per day to daily history,
         then delete all hourly snapshots beyond the retention period."""
         conn = self.get_connection()
@@ -655,40 +655,61 @@ class Database:
         cutoff = datetime.utcnow() - timedelta(hours=hours_to_keep)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
-        # Promote earliest hourly snapshot per recipe per day into recipe_history
+        # Promote earliest hourly snapshot per recipe per day into recipe_history.
+        # Uses MIN(snapshot_timestamp) per (recipe_id, day) via GROUP BY — avoids
+        # the O(N log N) sort that ROW_NUMBER() OVER (...) requires.
         cursor.execute("""
             INSERT OR IGNORE INTO recipe_history (
                 recipe_id, installs, forks, popularity_score, snapshot_date, snapshot_timestamp
             )
-            SELECT recipe_id, installs, forks, popularity_score,
-                   date(snapshot_timestamp) as snapshot_date,
-                   snapshot_timestamp
+            SELECT h.recipe_id, h.installs, h.forks, h.popularity_score,
+                   date(h.snapshot_timestamp) as snapshot_date,
+                   h.snapshot_timestamp
             FROM (
-                SELECT *,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY recipe_id, date(snapshot_timestamp)
-                        ORDER BY snapshot_timestamp ASC
-                    ) as rn
+                SELECT recipe_id, date(snapshot_timestamp) as day,
+                       MIN(snapshot_timestamp) as min_ts
                 FROM recipe_hourly_snapshots
                 WHERE snapshot_timestamp < ?
-            ) WHERE rn = 1
+                GROUP BY recipe_id, date(snapshot_timestamp)
+            ) earliest
+            JOIN recipe_hourly_snapshots h
+                ON h.recipe_id = earliest.recipe_id
+               AND h.snapshot_timestamp = earliest.min_ts
         """, (cutoff_iso,))
 
         promoted = cursor.rowcount
         if promoted > 0:
             logger.info(f"📦 Promoted {promoted} earliest hourly snapshots to daily history")
 
-        # Now safely delete all old hourly snapshots
+        # Delete expired hourly snapshots
         cursor.execute("""
             DELETE FROM recipe_hourly_snapshots
             WHERE snapshot_timestamp < ?
         """, (cutoff_iso,))
 
         deleted = cursor.rowcount
+
+        # Downsample recipe_history: for rows older than 90 days, keep only the earliest
+        # snapshot per recipe per month and delete the rest (daily → monthly resolution).
+        monthly_cutoff = (datetime.utcnow() - timedelta(days=90)).isoformat()
+        cursor.execute("""
+            DELETE FROM recipe_history
+            WHERE snapshot_timestamp < ?
+              AND snapshot_timestamp NOT IN (
+                  SELECT MIN(snapshot_timestamp)
+                  FROM recipe_history
+                  WHERE snapshot_timestamp < ?
+                  GROUP BY recipe_id, strftime('%Y-%m', snapshot_timestamp)
+              )
+        """, (monthly_cutoff, monthly_cutoff))
+        downsampled = cursor.rowcount
+
         conn.commit()
 
         if deleted > 0:
-            logger.info(f"🗑️  Cleaned up {deleted} old hourly snapshots (older than {cutoff_iso})")
+            logger.info(f"🗑️  Cleaned up {deleted} hourly snapshots (older than {cutoff_iso})")
+        if downsampled > 0:
+            logger.info(f"🗑️  Downsampled {downsampled} daily history rows to monthly (older than 90d)")
 
         return deleted
 
