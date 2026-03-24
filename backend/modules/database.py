@@ -5,6 +5,7 @@ Handles SQLite operations and schema management
 
 import logging
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -783,6 +784,7 @@ class Database:
         Get all recipes with their stats since N hours ago using hourly snapshots.
         Optionally filter to only the given recipe IDs.
         """
+        start_time = time.time()
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -853,6 +855,9 @@ class Database:
             row_dict['past_popularity'] = int(row_dict['past_popularity'] or 0)
             row_dict['has_history'] = bool(row_dict['has_history'])
             results.append(row_dict)
+
+        duration = time.time() - start_time
+        logger.debug(f"⏱️ get_recipes_with_delta_since_hours({hours_ago}h) took {duration:.3f}s for {len(results)} recipes")
 
         return results
 
@@ -966,6 +971,7 @@ class Database:
 
     def compute_global_ranks(self, timeframe: str, cutoff: datetime) -> Dict[str, Dict[str, int]]:
         """Compute current global rank and rank improvement with caching"""
+        start_time = time.time()
 
         # Check cache first
         cache_key = f"{timeframe}_{cutoff.isoformat()}"
@@ -1026,9 +1032,13 @@ class Database:
         self._rank_cache[cache_key] = result
         self._rank_cache_timestamp = current_time
 
+        duration = time.time() - start_time
+        logger.debug(f"⏱️ compute_global_ranks({timeframe}) took {duration:.3f}s for {len(result)} recipes")
+
         return result
     def get_global_stats(self, cutoff: datetime, use_hourly: bool = False) -> Dict:
         """Get total connections (sum of popularity) now and at cutoff"""
+        start_time = time.time()
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -1050,6 +1060,9 @@ class Database:
             WHERE rn = 1
         """, (cutoff_iso,))
         total_past = cursor.fetchone()['total']
+
+        duration = time.time() - start_time
+        logger.debug(f"⏱️ get_global_stats(use_hourly={use_hourly}) took {duration:.3f}s")
 
         return {
             'total_connections': total_now,

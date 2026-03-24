@@ -4,6 +4,7 @@ Calculates trending recipes based on installs+forks deltas over different period
 """
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -69,21 +70,8 @@ class TrendingCalculator:
                            user_limit: int = 0) -> Dict:
         """
         Calculate trending recipes for a given timeframe
-
-        Args:
-            timeframe: One of '1h', 'today', 'week', '24h', '3d', '7d', '30d', '180d'
-                      or legacy '1d', '1w', '1m', '6m'
-            limit: Maximum number of results to return
-            utc_offset_seconds: UTC offset in seconds for calendar calculations
-            recipe_ids: Optional list of recipe IDs to restrict results to (single-list mode)
-            include_all: If True, include all recipes (not just trending), sorted by popularity
-            user_recipe_ids: Optional list of user's recipe IDs (enables dual-list mode)
-            include_unchanged: If True, include user recipes with 0 popularity_delta
-            categories_filter: Optional list of categories to filter by
-
-        Returns:
-            Dict with timeframe info and trending recipes
         """
+        start_time_total = time.time()
         if timeframe not in self.TIMEFRAMES:
             raise ValueError(f"Invalid timeframe: {timeframe}. Must be one of: {list(self.TIMEFRAMES.keys())}")
 
@@ -110,6 +98,7 @@ class TrendingCalculator:
             )
 
         # Single-list mode (original behavior)
+        start_fetch = time.time()
         if timeframe_info['type'] == 'calendar':
             trending_recipes = self._calculate_calendar_trending(
                 timeframe, None, utc_offset_seconds, recipe_ids=recipe_ids,
@@ -120,9 +109,12 @@ class TrendingCalculator:
                 timeframe, timeframe_info['hours'], None, utc_offset_seconds,
                 recipe_ids=recipe_ids, include_all=include_all
             )
+        duration_fetch = time.time() - start_fetch
 
+        start_ranks = time.time()
         global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
-        cutoff_iso = cutoff.isoformat()
+        duration_ranks = time.time() - start_ranks
+        
         for recipe in trending_recipes:
             ranks = global_ranks.get(recipe['id'])
             if ranks:
@@ -156,14 +148,23 @@ class TrendingCalculator:
                     break
 
         # Global stats
+        start_stats = time.time()
         use_hourly = timeframe_info['type'] == 'rolling'
         global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
         global_stats['total_developers'] = self.database.get_total_developers()
+        duration_stats = time.time() - start_stats
 
         # Strip internal-only fields
         trending_recipes = [self._strip_recipe(r) for r in trending_recipes]
 
         labels = self.TIMEFRAME_LABELS.get(timeframe, {'short': timeframe, 'long': timeframe})
+        
+        total_duration = time.time() - start_time_total
+        logger.info(
+            f"📈 Trending calculation for '{timeframe}' completed in {total_duration:.3f}s "
+            f"(fetch: {duration_fetch:.3f}s, ranks: {duration_ranks:.3f}s, stats: {duration_stats:.3f}s)"
+        )
+
         return {
             'recipes': trending_recipes,
             'global_stats': global_stats,
@@ -184,8 +185,10 @@ class TrendingCalculator:
                              user_id: Optional[str] = None,
                              user_limit: int = 0) -> Dict:
         """Calculate trending with dual-list mode: user_recipes + global recipes"""
+        start_time_total = time.time()
 
         # Fetch ALL recipes (no filter)
+        start_fetch = time.time()
         if timeframe_info['type'] == 'calendar':
             all_recipes = self._calculate_calendar_trending(
                 timeframe, None, utc_offset_seconds, recipe_ids=None, include_all=True
@@ -195,9 +198,13 @@ class TrendingCalculator:
                 timeframe, timeframe_info['hours'], None, utc_offset_seconds,
                 recipe_ids=None, include_all=True
             )
+        duration_fetch = time.time() - start_fetch
 
         # Compute global ranks for all
+        start_ranks = time.time()
         global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
+        duration_ranks = time.time() - start_ranks
+        
         for recipe in all_recipes:
             ranks = global_ranks.get(recipe['id'])
             if ranks:
@@ -267,15 +274,24 @@ class TrendingCalculator:
         final_global = global_recipes[:remaining]
 
         # Global stats
+        start_stats = time.time()
         use_hourly = timeframe_info['type'] == 'rolling'
         global_stats = self.database.get_global_stats(cutoff, use_hourly=use_hourly)
         global_stats['total_developers'] = total_developers
+        duration_stats = time.time() - start_stats
 
         # Strip internal-only fields
         final_user = [self._strip_recipe(r) for r in final_user]
         final_global = [self._strip_recipe(r) for r in final_global]
 
         labels = self.TIMEFRAME_LABELS.get(timeframe, {'short': timeframe, 'long': timeframe})
+        
+        total_duration = time.time() - start_time_total
+        logger.info(
+            f"📈 Dual-list trending for '{timeframe}' completed in {total_duration:.3f}s "
+            f"(fetch: {duration_fetch:.3f}s, ranks: {duration_ranks:.3f}s, stats: {duration_stats:.3f}s)"
+        )
+
         return {
             'user_recipes': final_user,
             'recipes': final_global,
