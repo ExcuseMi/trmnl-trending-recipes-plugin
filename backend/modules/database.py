@@ -19,9 +19,13 @@ class Database:
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self.schema_version = 6  # Current schema version
-        self._rank_cache = {}
-        self._rank_cache_timestamp = None
-        self._rank_cache_ttl = 60*60
+        # Each cache maps key -> {'result': ..., 'timestamp': float}
+        self._rank_cache: dict = {}
+        self._rank_cache_ttl = 60 * 60        # 1 hour — ranks only change after hourly fetch
+        self._stats_cache: dict = {}
+        self._stats_cache_ttl = 5 * 60        # 5 minutes
+        self._delta_cache: dict = {}
+        self._delta_cache_ttl = 5 * 60        # 5 minutes
 
     def get_connection(self) -> sqlite3.Connection:
         """Get or create database connection"""
@@ -785,6 +789,15 @@ class Database:
         Optionally filter to only the given recipe IDs.
         """
         start_time = time.time()
+
+        ids_key = tuple(sorted(recipe_ids)) if recipe_ids is not None else None
+        cache_key = f"{hours_ago}_{ids_key}"
+        current_time = datetime.utcnow().timestamp()
+        entry = self._delta_cache.get(cache_key)
+        if entry and current_time - entry['timestamp'] < self._delta_cache_ttl:
+            logger.debug(f"⚡ get_recipes_with_delta_since_hours({hours_ago}h) cache hit ({len(entry['result'])} recipes)")
+            return entry['result']
+
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -859,6 +872,7 @@ class Database:
         duration = time.time() - start_time
         logger.debug(f"⏱️ get_recipes_with_delta_since_hours({hours_ago}h) took {duration:.3f}s for {len(results)} recipes")
 
+        self._delta_cache[cache_key] = {'result': results, 'timestamp': current_time}
         return results
 
     def get_recipe_ids_for_user(self, user_id: str) -> List[str]:
@@ -919,9 +933,10 @@ class Database:
 
             conn.commit()
 
-            # Invalidate rank cache
+            # Invalidate all query caches
             self._rank_cache = {}
-            self._rank_cache_timestamp = None
+            self._stats_cache = {}
+            self._delta_cache = {}
 
             logger.info(f"✓ Materialized views refreshed: {recipe_count} recipes, {user_count} developers")
 
@@ -973,13 +988,15 @@ class Database:
         """Compute current global rank and rank improvement with caching"""
         start_time = time.time()
 
-        # Check cache first
-        cache_key = f"{timeframe}_{cutoff.isoformat()}"
+        # Round cutoff to the hour so the cache key is stable across requests
+        cutoff_rounded = cutoff.replace(minute=0, second=0, microsecond=0)
+        cache_key = f"{timeframe}_{cutoff_rounded.isoformat()}"
         current_time = datetime.utcnow().timestamp()
         cutoff_iso = cutoff.isoformat()
-        if (cache_key in self._rank_cache and
-                current_time - self._rank_cache_timestamp < self._rank_cache_ttl):
-            return self._rank_cache[cache_key]
+        entry = self._rank_cache.get(cache_key)
+        if entry and current_time - entry['timestamp'] < self._rank_cache_ttl:
+            logger.debug(f"⚡ compute_global_ranks({timeframe}) cache hit")
+            return entry['result']
 
         # Read current ranks from materialized view, compute past ranks for rank_difference
         conn = self.get_connection()
@@ -1029,8 +1046,7 @@ class Database:
             }
 
         # Cache the result
-        self._rank_cache[cache_key] = result
-        self._rank_cache_timestamp = current_time
+        self._rank_cache[cache_key] = {'result': result, 'timestamp': current_time}
 
         duration = time.time() - start_time
         logger.debug(f"⏱️ compute_global_ranks({timeframe}) took {duration:.3f}s for {len(result)} recipes")
@@ -1039,6 +1055,16 @@ class Database:
     def get_global_stats(self, cutoff: datetime, use_hourly: bool = False) -> Dict:
         """Get total connections (sum of popularity) now and at cutoff"""
         start_time = time.time()
+
+        # Cache keyed on rounded-hour cutoff + table choice
+        cutoff_rounded = cutoff.replace(minute=0, second=0, microsecond=0)
+        cache_key = f"{'h' if use_hourly else 'd'}_{cutoff_rounded.isoformat()}"
+        current_time = datetime.utcnow().timestamp()
+        entry = self._stats_cache.get(cache_key)
+        if entry and current_time - entry['timestamp'] < self._stats_cache_ttl:
+            logger.debug(f"⚡ get_global_stats cache hit")
+            return entry['result']
+
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -1064,7 +1090,9 @@ class Database:
         duration = time.time() - start_time
         logger.debug(f"⏱️ get_global_stats(use_hourly={use_hourly}) took {duration:.3f}s")
 
-        return {
+        result = {
             'total_connections': total_now,
             'total_connections_delta': total_now - total_past,
         }
+        self._stats_cache[cache_key] = {'result': result, 'timestamp': current_time}
+        return result
