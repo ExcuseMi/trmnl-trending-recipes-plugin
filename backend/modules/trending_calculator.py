@@ -15,9 +15,10 @@ class TrendingCalculator:
 
     # Timeframe mapping
     TIMEFRAMES = {
-        # Calendar boundaries (since midnight/Monday)
+        # Calendar boundaries (since midnight/Monday/1st)
         'today': {'type': 'calendar', 'hours': None, 'description': 'Since local midnight today'},
         'week': {'type': 'calendar', 'hours': None, 'description': 'Since start of week (Monday)'},
+        'month': {'type': 'calendar', 'hours': None, 'description': 'Since start of month (1st)'},
 
         # New 1h timeframe
         '1h': {'type': 'rolling', 'hours': 1, 'description': 'Last hour'},
@@ -40,6 +41,7 @@ class TrendingCalculator:
     TIMEFRAME_LABELS = {
         'today': {'short': 'Today', 'long': 'Today'},
         'week': {'short': 'Week', 'long': 'This Week'},
+        'month': {'short': 'Month', 'long': 'This Month'},
         '1h': {'short': '1h', 'long': 'Last Hour'},
         '24h': {'short': '24h', 'long': 'Last 24 Hours'},
         '3d': {'short': '3d', 'long': 'Last 3 Days'},
@@ -90,8 +92,10 @@ class TrendingCalculator:
         if timeframe_info['type'] == 'calendar':
             if timeframe == 'today':
                 cutoff = self._get_local_midnight(utc_offset_seconds)
-            else:
+            elif timeframe == 'week':
                 cutoff = self._get_week_start(utc_offset_seconds)
+            else:
+                cutoff = self._get_month_start(utc_offset_seconds)
         else:
             cutoff = datetime.utcnow() - timedelta(hours=timeframe_info['hours'])
 
@@ -301,6 +305,11 @@ class TrendingCalculator:
 
             logger.info(f"📅 Calculating 'week' trending (since {cutoff.isoformat()} UTC)")
 
+        elif timeframe == 'month':
+            cutoff = self._get_month_start(utc_offset_seconds)
+
+            logger.info(f"📅 Calculating 'month' trending (since {cutoff.isoformat()} UTC)")
+
         else:
             raise ValueError(f"Unknown calendar timeframe: {timeframe}")
 
@@ -476,6 +485,13 @@ class TrendingCalculator:
         local_now = now_utc + timedelta(seconds=utc_offset_seconds)
         local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         return local_midnight - timedelta(seconds=utc_offset_seconds)
+
+    def _get_month_start(self, utc_offset_seconds: int) -> datetime:
+        """Get start of the current month (1st at 00:00) in local time, converted to UTC"""
+        now_utc = datetime.utcnow()
+        local_now = now_utc + timedelta(seconds=utc_offset_seconds)
+        local_month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return local_month_start - timedelta(seconds=utc_offset_seconds)
 
     def _get_week_start(self, utc_offset_seconds: int) -> datetime:
         """Get start of week (Monday) in local time, converted to UTC"""

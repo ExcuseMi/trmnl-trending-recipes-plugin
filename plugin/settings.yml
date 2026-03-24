@@ -39,9 +39,11 @@ custom_fields:
   options:
   - Today (since midnight): today
   - This Week (since Monday): week
+  - This Month (since 1st): month
   - Last 24 Hours: 24h
   - Last 3 Days: 3d
   - Last Week: 7d
+  - Last 30 Days: 30d
 - keyname: layout
   field_type: select
   name: Layout
