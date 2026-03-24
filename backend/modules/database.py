@@ -804,42 +804,48 @@ class Database:
         cutoff = datetime.utcnow() - timedelta(hours=hours_ago)
         cutoff_iso = cutoff.isoformat() + 'Z'
 
+        # Find the latest snapshot timestamp per recipe before the cutoff using GROUP BY +
+        # MAX (hash aggregation — O(N)), then point-join back to fetch the actual row data
+        # using the (recipe_id, snapshot_timestamp) index. Avoids the O(N log N) sort
+        # that ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) requires.
         query = """
+            WITH latest_ts AS (
+                SELECT recipe_id, MAX(snapshot_timestamp) AS max_ts
+                FROM (
+                    SELECT recipe_id, snapshot_timestamp
+                    FROM recipe_hourly_snapshots
+                    WHERE snapshot_timestamp <= ?
+                    UNION ALL
+                    SELECT recipe_id, snapshot_timestamp
+                    FROM recipe_history
+                    WHERE snapshot_timestamp <= ?
+                )
+                GROUP BY recipe_id
+            )
             SELECT
                 r.id,
                 r.name,
                 r.description,
                 r.categories,
-                r.installs as current_installs,
-                r.forks as current_forks,
-                r.popularity_score as current_popularity,
+                r.installs AS current_installs,
+                r.forks AS current_forks,
+                r.popularity_score AS current_popularity,
                 r.url,
                 r.icon_url,
                 r.thumbnail_url,
                 r.created_at,
                 r.user_id,
-                COALESCE(p.installs, 0) as past_installs,
-                COALESCE(p.forks, 0) as past_forks,
-                COALESCE(p.popularity_score, 0) as past_popularity,
-                p.snapshot_timestamp as past_snapshot_timestamp,
-                CASE WHEN p.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
+                COALESCE(h.installs, rh.installs, 0) AS past_installs,
+                COALESCE(h.forks, rh.forks, 0) AS past_forks,
+                COALESCE(h.popularity_score, rh.popularity_score, 0) AS past_popularity,
+                lt.max_ts AS past_snapshot_timestamp,
+                CASE WHEN lt.max_ts IS NOT NULL THEN 1 ELSE 0 END AS has_history
             FROM recipes r
-            LEFT JOIN (
-                SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY recipe_id
-                           ORDER BY snapshot_timestamp DESC
-                       ) as rn
-                FROM (
-                    SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp
-                    FROM recipe_hourly_snapshots
-                    WHERE snapshot_timestamp <= ?
-                    UNION ALL
-                    SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp
-                    FROM recipe_history
-                    WHERE snapshot_timestamp <= ?
-                )
-            ) p ON r.id = p.recipe_id AND p.rn = 1
+            LEFT JOIN latest_ts lt ON lt.recipe_id = r.id
+            LEFT JOIN recipe_hourly_snapshots h
+                ON h.recipe_id = lt.recipe_id AND h.snapshot_timestamp = lt.max_ts
+            LEFT JOIN recipe_history rh
+                ON rh.recipe_id = lt.recipe_id AND rh.snapshot_timestamp = lt.max_ts
             WHERE r.is_active = 1
         """
 
@@ -870,7 +876,7 @@ class Database:
             results.append(row_dict)
 
         duration = time.time() - start_time
-        logger.debug(f"⏱️ get_recipes_with_delta_since_hours({hours_ago}h) took {duration:.3f}s for {len(results)} recipes")
+        logger.info(f"⏱️ get_recipes_with_delta_since_hours({hours_ago}h): {len(results)} recipes in {duration:.3f}s")
 
         self._delta_cache[cache_key] = {'result': results, 'timestamp': current_time}
         return results
@@ -897,6 +903,42 @@ class Database:
                 return None
         return None
 
+
+    def log_table_stats(self):
+        """Log row counts and snapshot age ranges for key tables"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM recipes WHERE is_active = 1")
+        recipes_count = cursor.fetchone()['cnt']
+
+        cursor.execute("""
+            SELECT COUNT(*) as cnt,
+                   MIN(snapshot_timestamp) as oldest,
+                   MAX(snapshot_timestamp) as newest
+            FROM recipe_hourly_snapshots
+        """)
+        row = cursor.fetchone()
+        hourly_count = row['cnt']
+        hourly_oldest = row['oldest']
+        hourly_newest = row['newest']
+
+        cursor.execute("""
+            SELECT COUNT(*) as cnt,
+                   MIN(snapshot_timestamp) as oldest,
+                   MAX(snapshot_timestamp) as newest
+            FROM recipe_history
+        """)
+        row = cursor.fetchone()
+        history_count = row['cnt']
+        history_oldest = row['oldest']
+        history_newest = row['newest']
+
+        logger.info(
+            f"📊 Table stats: recipes={recipes_count} | "
+            f"hourly_snapshots={hourly_count:,} ({hourly_oldest} → {hourly_newest}) | "
+            f"recipe_history={history_count:,} ({history_oldest} → {history_newest})"
+        )
 
     def refresh_materialized_views(self):
         """Refresh the materialized view tables for recipe and user ranks"""
@@ -939,6 +981,7 @@ class Database:
             self._delta_cache = {}
 
             logger.info(f"✓ Materialized views refreshed: {recipe_count} recipes, {user_count} developers")
+            self.log_table_stats()
 
         except Exception as e:
             conn.rollback()
@@ -1003,24 +1046,28 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            WITH historical_snapshots AS (
-                SELECT recipe_id, popularity_score, snapshot_timestamp
-                FROM recipe_history
-                WHERE snapshot_timestamp <= ?
-                UNION ALL
-                SELECT recipe_id, popularity_score, snapshot_timestamp
-                FROM recipe_hourly_snapshots
-                WHERE snapshot_timestamp <= ?
+            WITH latest_ts AS (
+                -- GROUP BY + MAX: hash aggregation O(N), avoids O(N log N) sort of ROW_NUMBER
+                SELECT recipe_id, MAX(snapshot_timestamp) AS max_ts
+                FROM (
+                    SELECT recipe_id, snapshot_timestamp FROM recipe_history WHERE snapshot_timestamp <= ?
+                    UNION ALL
+                    SELECT recipe_id, snapshot_timestamp FROM recipe_hourly_snapshots WHERE snapshot_timestamp <= ?
+                )
+                GROUP BY recipe_id
             ),
             latest_before_cutoff AS (
-                SELECT recipe_id as id, popularity_score
-                FROM (
-                    SELECT *,
-                           ROW_NUMBER() OVER (PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC) as rn
-                    FROM historical_snapshots
-                ) WHERE rn = 1
+                -- Point-join back to fetch popularity using the (recipe_id, snapshot_timestamp) index
+                SELECT lt.recipe_id AS id,
+                       COALESCE(h.popularity_score, rh.popularity_score) AS popularity_score
+                FROM latest_ts lt
+                LEFT JOIN recipe_hourly_snapshots h
+                    ON h.recipe_id = lt.recipe_id AND h.snapshot_timestamp = lt.max_ts
+                LEFT JOIN recipe_history rh
+                    ON rh.recipe_id = lt.recipe_id AND rh.snapshot_timestamp = lt.max_ts
             ),
             past_ranked AS (
+                -- ROW_NUMBER here ranks only ~800 recipes, not millions of rows
                 SELECT id,
                        ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as past_rank
                 FROM latest_before_cutoff
@@ -1049,7 +1096,7 @@ class Database:
         self._rank_cache[cache_key] = {'result': result, 'timestamp': current_time}
 
         duration = time.time() - start_time
-        logger.debug(f"⏱️ compute_global_ranks({timeframe}) took {duration:.3f}s for {len(result)} recipes")
+        logger.info(f"⏱️ compute_global_ranks({timeframe}): {len(result)} recipes in {duration:.3f}s")
 
         return result
     def get_global_stats(self, cutoff: datetime, use_hourly: bool = False) -> Dict:
@@ -1077,18 +1124,19 @@ class Database:
         table = 'recipe_hourly_snapshots' if use_hourly else 'recipe_history'
 
         cursor.execute(f"""
-            SELECT COALESCE(SUM(popularity_score), 0) as total FROM (
-                SELECT recipe_id, popularity_score,
-                    ROW_NUMBER() OVER (PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC) as rn
+            SELECT COALESCE(SUM(s.popularity_score), 0) as total
+            FROM (
+                SELECT recipe_id, MAX(snapshot_timestamp) AS max_ts
                 FROM {table}
                 WHERE snapshot_timestamp <= ?
-            ) sub
-            WHERE rn = 1
+                GROUP BY recipe_id
+            ) latest
+            JOIN {table} s ON s.recipe_id = latest.recipe_id AND s.snapshot_timestamp = latest.max_ts
         """, (cutoff_iso,))
         total_past = cursor.fetchone()['total']
 
         duration = time.time() - start_time
-        logger.debug(f"⏱️ get_global_stats(use_hourly={use_hourly}) took {duration:.3f}s")
+        logger.info(f"⏱️ get_global_stats(use_hourly={use_hourly}): {duration:.3f}s")
 
         result = {
             'total_connections': total_now,

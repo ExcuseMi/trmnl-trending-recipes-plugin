@@ -386,6 +386,7 @@ def initialize():
 
     # Initialize database (all workers need this)
     db.initialize()
+    db.log_table_stats()
 
     # Determine if this worker should run background jobs
     is_primary_worker = try_acquire_primary_worker()
