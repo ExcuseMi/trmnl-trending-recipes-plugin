@@ -517,8 +517,8 @@ class TrendingCalculator:
             if popularity_delta <= 0:
                 return 0.0
 
-            # For calendar timeframes, use actual elapsed time
-            if timeframe in ('today', 'week', 'month') and cutoff_iso:
+            timeframe_info = self.TIMEFRAMES.get(timeframe, {})
+            if timeframe_info.get('type') == 'calendar' and cutoff_iso:
                 try:
                     hours_passed = (datetime.utcnow() - datetime.fromisoformat(
                         cutoff_iso.replace('Z', ''))).total_seconds() / 3600
@@ -528,7 +528,6 @@ class TrendingCalculator:
                 return float(popularity_delta) / days
 
             # For rolling windows, normalize by the window size
-            timeframe_info = self.TIMEFRAMES.get(timeframe, {'hours': 24})
             hours = timeframe_info.get('hours', 24)
             days = max(0.1, hours / 24)
             return float(popularity_delta) / days
