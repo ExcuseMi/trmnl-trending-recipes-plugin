@@ -993,39 +993,53 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            WITH historical_snapshot AS (
+            WITH pre_cutoff AS (
                 SELECT recipe_id as id, popularity_score
                 FROM (
-                    SELECT
-                        recipe_id,
-                        popularity_score,
-                        snapshot_timestamp,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY recipe_id
-                            ORDER BY snapshot_timestamp DESC
-                        ) as rn
+                    SELECT recipe_id, popularity_score, snapshot_timestamp,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC
+                           ) as rn
                     FROM recipe_history
                     WHERE snapshot_timestamp <= ?
                 ) WHERE rn = 1
                 UNION ALL
                 SELECT recipe_id as id, popularity_score
                 FROM (
-                    SELECT
-                        recipe_id,
-                        popularity_score,
-                        snapshot_timestamp,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY recipe_id
-                            ORDER BY snapshot_timestamp DESC
-                        ) as rn
+                    SELECT recipe_id, popularity_score, snapshot_timestamp,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC
+                           ) as rn
                     FROM recipe_hourly_snapshots
                     WHERE snapshot_timestamp <= ?
-                        AND NOT EXISTS (
-                            SELECT 1 FROM recipe_history rh2
-                            WHERE rh2.recipe_id = recipe_hourly_snapshots.recipe_id
-                              AND rh2.snapshot_timestamp <= ?
-                        )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM recipe_history rh2
+                          WHERE rh2.recipe_id = recipe_hourly_snapshots.recipe_id
+                            AND rh2.snapshot_timestamp <= ?
+                      )
                 ) WHERE rn = 1
+            ),
+            oldest_snapshot AS (
+                SELECT id, popularity_score
+                FROM (
+                    SELECT recipe_id as id, popularity_score,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY recipe_id ORDER BY snapshot_timestamp ASC
+                           ) as rn
+                    FROM (
+                        SELECT recipe_id, popularity_score, snapshot_timestamp
+                        FROM recipe_history
+                        UNION ALL
+                        SELECT recipe_id, popularity_score, snapshot_timestamp
+                        FROM recipe_hourly_snapshots
+                    )
+                ) WHERE rn = 1
+            ),
+            historical_snapshot AS (
+                SELECT * FROM pre_cutoff
+                UNION ALL
+                SELECT os.id, os.popularity_score FROM oldest_snapshot os
+                WHERE os.id NOT IN (SELECT id FROM pre_cutoff)
             ),
             past_ranked AS (
                 SELECT id,

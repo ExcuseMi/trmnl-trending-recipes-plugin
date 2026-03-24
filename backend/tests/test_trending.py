@@ -127,15 +127,15 @@ class TestDeltaCalculation:
         match = next(r for r in result['recipes'] if r['id'] == 'r1')
         assert match['popularity_delta'] == 50
 
-    def test_new_recipe_uses_oldest_snapshot_for_long_window(self, db, calc):
-        """Recipe newer than the window appears using its oldest available snapshot as baseline."""
+    def test_new_recipe_uses_full_popularity_as_delta_for_long_window(self, db, calc):
+        """Recipe published within the window started from 0 — delta equals full popularity."""
         insert_recipe(db, 'new', 'New Recipe', popularity=100, age_days=10)
         insert_hourly_snapshot(db, 'new', popularity=5, hours_ago=5 * 24)
 
         result = calc.calculate_trending('30d')
 
         match = next(r for r in result['recipes'] if r['id'] == 'new')
-        assert match['popularity_delta'] == 95
+        assert match['popularity_delta'] == 100
 
     def test_new_recipe_visible_in_short_window(self, db, calc):
         """Same new recipe should surface correctly in a shorter timeframe."""
@@ -242,8 +242,8 @@ class TestCalendarTimeframes:
         assert 'recipes' in result
         assert result['timeframe']['key'] == 'month'
 
-    def test_month_shows_new_recipe_via_oldest_snapshot_fallback(self, db, calc):
-        """Recipe published this month uses its oldest snapshot as baseline."""
+    def test_month_shows_new_recipe_with_full_delta(self, db, calc):
+        """Recipe published this month shows full popularity as delta (started from 0)."""
         insert_recipe(db, 'new', 'New This Month', popularity=131, age_days=17)
         insert_hourly_snapshot(db, 'new', popularity=2, hours_ago=17 * 24)
 
@@ -251,7 +251,7 @@ class TestCalendarTimeframes:
 
         match = next((r for r in result['recipes'] if r['id'] == 'new'), None)
         assert match is not None
-        assert match['popularity_delta'] == 129
+        assert match['popularity_delta'] == 131
 
     def test_today_timeframe_returns_results(self, db, calc):
         insert_recipe(db, 'r1', 'Recipe', popularity=50, age_days=60)
@@ -363,12 +363,31 @@ class TestRanking:
 
         assert result['recipes'][0]['id'] == 'r1'
 
-    def test_new_recipe_rank_difference_is_zero(self, db, calc):
-        """New recipes with no pre-window snapshot must not show a fake rank jump."""
+    def test_new_recipe_rank_difference_uses_first_snapshot(self, db, calc):
+        """New recipes use their oldest snapshot as the past rank baseline."""
+        # Several established recipes with high popularity before the window
+        for i, pop in enumerate([500, 400, 300, 200, 180, 160, 150]):
+            insert_recipe(db, f'old{i}', f'Established {i}', popularity=pop)
+            insert_daily_snapshot(db, f'old{i}', popularity=pop, days_ago=35)
+
+        # new: published within window — popularity=2 at first poll, now 131
+        # current rank: somewhere in the middle; past rank: near the bottom (popularity=2)
         insert_recipe(db, 'new', 'New Recipe', popularity=131, age_days=17)
         insert_hourly_snapshot(db, 'new', popularity=2, hours_ago=17 * 24)
 
+        db.refresh_materialized_views()
         result = calc.calculate_trending('30d')
 
         match = next(r for r in result['recipes'] if r['id'] == 'new')
-        assert match.get('rank_difference', 0) == 0
+        # 'new' moved up from near-last (popularity=2) to a mid-table rank (popularity=131)
+        assert match.get('rank_difference', 0) > 0
+
+    def test_deleted_plugin_rank_difference_is_zero(self, db, calc):
+        """Plugins with no snapshots at all show rank_difference=0."""
+        insert_recipe(db, 'gone', 'Deleted', popularity=100, is_active=0)
+
+        result = calc.calculate_trending('30d', include_all=True)
+
+        match = next((r for r in result['recipes'] if r['id'] == 'gone'), None)
+        if match:
+            assert match.get('rank_difference', 0) == 0

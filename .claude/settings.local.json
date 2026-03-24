@@ -5,7 +5,9 @@
       "Bash(python -m py_compile:*)",
       "WebFetch(domain:context7.com)",
       "Bash(python -m pytest tests/test_trending.py -v)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/test_trending.py::TestRanking::test_new_recipe_rank_difference_uses_first_snapshot -v -s)",
+      "Bash(python -c \":*)"
     ]
   }
 }

@@ -121,6 +121,7 @@ class TrendingCalculator:
             )
 
         global_ranks = self.database.compute_global_ranks(timeframe, cutoff)
+        cutoff_iso = cutoff.isoformat()
         for recipe in trending_recipes:
             ranks = global_ranks.get(recipe['id'])
             if ranks:
@@ -330,6 +331,7 @@ class TrendingCalculator:
                     (f" filtered to {len(recipe_ids)} recipes" if recipe_ids else ""))
 
         # Get recipes with delta since cutoff using hourly snapshots
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
         recipes = self.database.get_recipes_with_delta_since_hours(hours, recipe_ids=recipe_ids)
 
         # Log a one-line summary with the actual snapshot age range
@@ -353,6 +355,7 @@ class TrendingCalculator:
             logger.debug(f"Rolling {timeframe} ({hours}h): {len(recipes)} recipes, no snapshot data")
 
         return self._process_trending_recipes(recipes, timeframe, limit, utc_offset_seconds,
+                                              cutoff_iso=cutoff.isoformat(),
                                               include_all=include_all)
 
     def _process_trending_recipes(self, recipes: List[Dict], timeframe: str, limit: Optional[int],
@@ -367,6 +370,17 @@ class TrendingCalculator:
 
             has_history = recipe.get('has_history', False)
             popularity_delta = (recipe['current_popularity'] - recipe.get('past_popularity', 0)) if has_history else 0
+
+            # If the recipe was published after the window start its pre-window popularity
+            # was 0 (it didn't exist), so the full current popularity is the window delta.
+            if cutoff_iso and published_at_str:
+                try:
+                    published_dt = datetime.fromisoformat(published_at_str.replace('Z', ''))
+                    cutoff_dt = datetime.fromisoformat(cutoff_iso.replace('Z', ''))
+                    if published_dt > cutoff_dt:
+                        popularity_delta = recipe['current_popularity']
+                except Exception:
+                    pass
 
             trending_score = self._calculate_trending_score_for_period(
                 {
@@ -397,7 +411,8 @@ class TrendingCalculator:
                 'popularity': recipe['current_popularity'],
                 'popularity_delta': popularity_delta,
                 'trending_score': trending_score,
-                'recipe_age_days': int(recipe_age_days)
+                'recipe_age_days': int(recipe_age_days),
+                'published_at': published_at_str,
             })
 
         # Sort by popularity when showing all, otherwise by trending score
