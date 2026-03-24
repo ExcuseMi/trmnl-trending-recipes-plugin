@@ -518,7 +518,7 @@ class TrendingCalculator:
                 return 0.0
 
             # For calendar timeframes, use actual elapsed time
-            if timeframe in ('today', 'week') and cutoff_iso:
+            if timeframe in ('today', 'week', 'month') and cutoff_iso:
                 try:
                     hours_passed = (datetime.utcnow() - datetime.fromisoformat(
                         cutoff_iso.replace('Z', ''))).total_seconds() / 3600
