@@ -386,6 +386,7 @@ def initialize():
 
     # Initialize database (all workers need this)
     db.initialize()
+    db.cleanup_hourly_snapshots(hours_to_keep=24 * 7)
     db.log_table_stats()
 
     # Determine if this worker should run background jobs
