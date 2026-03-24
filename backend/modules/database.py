@@ -145,6 +145,11 @@ class Database:
                 ON recipe_hourly_snapshots(snapshot_timestamp)
             """)
 
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_hourly_snapshots_recipe_ts
+                ON recipe_hourly_snapshots(recipe_id, snapshot_timestamp DESC)
+            """)
+
             # 3. Migrate existing daily snapshots to also have hourly resolution
             # Use INSERT OR IGNORE instead of ON CONFLICT DO NOTHING
             cursor.execute("""
@@ -281,6 +286,8 @@ class Database:
                 created_at TEXT,
                 updated_at TEXT NOT NULL,
                 last_fetched TEXT NOT NULL,
+                user_id TEXT,
+                categories TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1
             )
         """)
@@ -294,6 +301,7 @@ class Database:
                 forks INTEGER NOT NULL,
                 popularity_score INTEGER NOT NULL,
                 snapshot_date TEXT NOT NULL,
+                snapshot_timestamp TEXT,
                 FOREIGN KEY (recipe_id) REFERENCES recipes(id),
                 UNIQUE(recipe_id, snapshot_date)
             )
@@ -308,6 +316,11 @@ class Database:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_recipe_history_recipe 
             ON recipe_history(recipe_id, snapshot_date)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_recipe_history_recipe_ts
+            ON recipe_history(recipe_id, snapshot_timestamp DESC)
         """)
 
         cursor.execute("""
@@ -790,54 +803,28 @@ class Database:
                 r.thumbnail_url,
                 r.created_at,
                 r.user_id,
-                COALESCE(h.installs, dh.installs, oldest.installs, 0) as past_installs,
-                COALESCE(h.forks, dh.forks, oldest.forks, 0) as past_forks,
-                COALESCE(h.popularity_score, dh.popularity_score, oldest.popularity_score, 0) as past_popularity,
-                COALESCE(h.snapshot_timestamp, dh.snapshot_timestamp, oldest.snapshot_timestamp) as past_snapshot_timestamp,
-                CASE WHEN h.snapshot_timestamp IS NOT NULL OR dh.snapshot_timestamp IS NOT NULL OR oldest.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
+                COALESCE(p.installs, 0) as past_installs,
+                COALESCE(p.forks, 0) as past_forks,
+                COALESCE(p.popularity_score, 0) as past_popularity,
+                p.snapshot_timestamp as past_snapshot_timestamp,
+                CASE WHEN p.snapshot_timestamp IS NOT NULL THEN 1 ELSE 0 END as has_history
             FROM recipes r
-            LEFT JOIN (
-                SELECT DISTINCT
-                    recipe_id,
-                    installs,
-                    forks,
-                    popularity_score,
-                    snapshot_timestamp,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY recipe_id
-                        ORDER BY snapshot_timestamp DESC
-                    ) as rn
-                FROM recipe_hourly_snapshots
-                WHERE snapshot_timestamp <= ?
-            ) h ON r.id = h.recipe_id AND h.rn = 1
-            LEFT JOIN (
-                SELECT DISTINCT
-                    recipe_id,
-                    installs,
-                    forks,
-                    popularity_score,
-                    snapshot_timestamp,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY recipe_id
-                        ORDER BY snapshot_timestamp DESC
-                    ) as rn
-                FROM recipe_history
-                WHERE snapshot_timestamp <= ?
-            ) dh ON r.id = dh.recipe_id AND dh.rn = 1
             LEFT JOIN (
                 SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp,
                        ROW_NUMBER() OVER (
                            PARTITION BY recipe_id
-                           ORDER BY snapshot_timestamp ASC
+                           ORDER BY snapshot_timestamp DESC
                        ) as rn
                 FROM (
                     SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp
                     FROM recipe_hourly_snapshots
+                    WHERE snapshot_timestamp <= ?
                     UNION ALL
                     SELECT recipe_id, installs, forks, popularity_score, snapshot_timestamp
                     FROM recipe_history
+                    WHERE snapshot_timestamp <= ?
                 )
-            ) oldest ON r.id = oldest.recipe_id AND oldest.rn = 1
+            ) p ON r.id = p.recipe_id AND p.rn = 1
             WHERE r.is_active = 1
         """
 
@@ -993,67 +980,39 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            WITH pre_cutoff AS (
+            WITH historical_snapshots AS (
+                SELECT recipe_id, popularity_score, snapshot_timestamp
+                FROM recipe_history
+                WHERE snapshot_timestamp <= ?
+                UNION ALL
+                SELECT recipe_id, popularity_score, snapshot_timestamp
+                FROM recipe_hourly_snapshots
+                WHERE snapshot_timestamp <= ?
+            ),
+            latest_before_cutoff AS (
                 SELECT recipe_id as id, popularity_score
                 FROM (
-                    SELECT recipe_id, popularity_score, snapshot_timestamp,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC
-                           ) as rn
-                    FROM recipe_history
-                    WHERE snapshot_timestamp <= ?
+                    SELECT *,
+                           ROW_NUMBER() OVER (PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC) as rn
+                    FROM historical_snapshots
                 ) WHERE rn = 1
-                UNION ALL
-                SELECT recipe_id as id, popularity_score
-                FROM (
-                    SELECT recipe_id, popularity_score, snapshot_timestamp,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY recipe_id ORDER BY snapshot_timestamp DESC
-                           ) as rn
-                    FROM recipe_hourly_snapshots
-                    WHERE snapshot_timestamp <= ?
-                      AND NOT EXISTS (
-                          SELECT 1 FROM recipe_history rh2
-                          WHERE rh2.recipe_id = recipe_hourly_snapshots.recipe_id
-                            AND rh2.snapshot_timestamp <= ?
-                      )
-                ) WHERE rn = 1
-            ),
-            oldest_snapshot AS (
-                SELECT id, popularity_score
-                FROM (
-                    SELECT recipe_id as id, popularity_score,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY recipe_id ORDER BY snapshot_timestamp ASC
-                           ) as rn
-                    FROM (
-                        SELECT recipe_id, popularity_score, snapshot_timestamp
-                        FROM recipe_history
-                        UNION ALL
-                        SELECT recipe_id, popularity_score, snapshot_timestamp
-                        FROM recipe_hourly_snapshots
-                    )
-                ) WHERE rn = 1
-            ),
-            historical_snapshot AS (
-                SELECT * FROM pre_cutoff
-                UNION ALL
-                SELECT os.id, os.popularity_score FROM oldest_snapshot os
-                WHERE os.id NOT IN (SELECT id FROM pre_cutoff)
             ),
             past_ranked AS (
                 SELECT id,
                        ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as past_rank
-                FROM historical_snapshot
+                FROM latest_before_cutoff
                 WHERE popularity_score > 0
+            ),
+            total_active AS (
+                SELECT COUNT(*) as cnt FROM mv_recipe_ranks
             )
             SELECT
                 mv.recipe_id as id,
                 mv.global_rank as current_rank,
-                COALESCE(pr.past_rank, mv.global_rank) as past_rank
+                COALESCE(pr.past_rank, (SELECT cnt FROM total_active) + 1) as past_rank
             FROM mv_recipe_ranks mv
             LEFT JOIN past_ranked pr ON mv.recipe_id = pr.id
-        """, (cutoff_iso, cutoff_iso, cutoff_iso))
+        """, (cutoff_iso, cutoff_iso))
 
         # Build result
         result = {}

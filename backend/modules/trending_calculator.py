@@ -56,7 +56,8 @@ class TrendingCalculator:
     def __init__(self, database):
         self.database = database
 
-    def calculate_trending(self, timeframe: str, limit: int = 10, utc_offset_seconds: int = 0,
+    def calculate_trending(self, timeframe: str,
+                           limit: int = 10, utc_offset_seconds: int = 0,
                            recipe_ids: Optional[List[str]] = None,
                            include_all: bool = False,
                            user_recipe_ids: Optional[List[str]] = None,
