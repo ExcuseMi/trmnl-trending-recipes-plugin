@@ -1067,7 +1067,13 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            WITH latest_ts AS (
+            WITH current_ranked AS (
+                SELECT id AS recipe_id,
+                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) AS global_rank
+                FROM recipes
+                WHERE popularity_score > 0
+            ),
+            latest_ts AS (
                 -- GROUP BY + MAX: hash aggregation O(N), avoids O(N log N) sort of ROW_NUMBER
                 SELECT recipe_id, MAX(snapshot_timestamp) AS max_ts
                 FROM (
@@ -1095,14 +1101,14 @@ class Database:
                 WHERE popularity_score > 0
             ),
             total_active AS (
-                SELECT COUNT(*) as cnt FROM mv_recipe_ranks
+                SELECT COUNT(*) as cnt FROM recipes WHERE popularity_score > 0
             )
             SELECT
-                mv.recipe_id as id,
-                mv.global_rank as current_rank,
+                cr.recipe_id as id,
+                cr.global_rank as current_rank,
                 COALESCE(pr.past_rank, (SELECT cnt FROM total_active) + 1) as past_rank
-            FROM mv_recipe_ranks mv
-            LEFT JOIN past_ranked pr ON mv.recipe_id = pr.id
+            FROM current_ranked cr
+            LEFT JOIN past_ranked pr ON cr.recipe_id = pr.id
         """, (cutoff_iso, cutoff_iso))
 
         # Build result
