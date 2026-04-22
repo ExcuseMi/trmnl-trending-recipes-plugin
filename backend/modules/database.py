@@ -989,7 +989,7 @@ class Database:
                        ROW_NUMBER() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE user_id IS NOT NULL AND popularity_score > 0 AND is_active = 1
+                WHERE user_id IS NOT NULL AND is_active = 1
                 GROUP BY user_id
             """, (now,))
             user_count = cursor.rowcount
@@ -1008,6 +1008,19 @@ class Database:
             conn.rollback()
             logger.error(f"✗ Failed to refresh materialized views: {e}")
             raise
+
+    def get_total_popularity_for_recipes(self, recipe_ids: List[str]) -> int:
+        """Sum popularity_score for all given recipe IDs regardless of trending window"""
+        if not recipe_ids:
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        placeholders = ','.join('?' * len(recipe_ids))
+        cursor.execute(
+            f"SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes WHERE id IN ({placeholders})",
+            recipe_ids
+        )
+        return cursor.fetchone()['total']
 
     def get_user_rank(self, user_id: str) -> Optional[Dict]:
         """Get a developer's rank from the materialized view"""

@@ -233,7 +233,7 @@ class TrendingCalculator:
         # Compute user_stats from ALL user recipes (before filtering)
         total_developers = self.database.get_total_developers()
         user_stats = {
-            'total_popularity': sum(r['popularity'] for r in user_recipes_all),
+            'total_popularity': self.database.get_total_popularity_for_recipes(user_recipe_ids),
             'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
             'total_recipes': len(user_recipe_ids),
         }
