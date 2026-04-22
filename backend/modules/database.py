@@ -1047,7 +1047,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) as total FROM mv_user_ranks")
+        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL AND is_active = 1")
         return cursor.fetchone()['total']
 
     def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
