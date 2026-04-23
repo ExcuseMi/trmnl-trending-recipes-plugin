@@ -211,6 +211,9 @@ class TrendingCalculator:
                 recipe['global_rank'] = ranks['global_rank']
                 recipe['rank_difference'] = ranks['rank_difference']
 
+        # Store unfiltered set for user_stats calculation
+        all_recipes_unfiltered = list(all_recipes)
+
         # Apply category filter to full set
         if categories_filter:
             all_recipes = [
@@ -230,11 +233,13 @@ class TrendingCalculator:
         user_recipes_all = [r for r in all_recipes if r['id'] in user_id_set]
         global_recipes = [r for r in all_recipes if r['id'] not in user_id_set]
 
-        # Compute user_stats from ALL user recipes (before filtering)
+        # Compute user_stats from ALL user recipes (before category filtering)
+        # We need to compute deltas for all user recipes to get the true developer delta
+        user_recipes_unfiltered = [r for r in all_recipes_unfiltered if r['id'] in user_id_set]
         total_developers = self.database.get_total_developers()
         user_stats = {
             'total_popularity': self.database.get_total_popularity_for_recipes(user_recipe_ids),
-            'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_all),
+            'popularity_delta': sum(r['popularity_delta'] for r in user_recipes_unfiltered),
             'total_recipes': len(user_recipe_ids),
         }
 

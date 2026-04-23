@@ -989,7 +989,7 @@ class Database:
                        ROW_NUMBER() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE user_id IS NOT NULL AND is_active = 1
+                WHERE user_id IS NOT NULL
                 GROUP BY user_id
             """, (now,))
             user_count = cursor.rowcount
@@ -1047,7 +1047,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL AND is_active = 1")
+        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL")
         return cursor.fetchone()['total']
 
     def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
