@@ -973,7 +973,7 @@ class Database:
             cursor.execute("""
                 INSERT INTO mv_recipe_ranks (recipe_id, popularity_score, global_rank, updated_at)
                 SELECT id, popularity_score,
-                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as global_rank,
+                       DENSE_RANK() OVER (ORDER BY popularity_score DESC) as global_rank,
                        ?
                 FROM recipes
                 WHERE popularity_score > 0 AND is_active = 1
@@ -984,13 +984,14 @@ class Database:
             cursor.execute("DELETE FROM mv_user_ranks")
             cursor.execute("""
                 INSERT INTO mv_user_ranks (user_id, total_popularity, recipe_count, global_rank, updated_at)
-                SELECT user_id, SUM(popularity_score) as total_popularity,
+                SELECT CAST(user_id AS TEXT) as user_id, 
+                       SUM(popularity_score) as total_popularity,
                        COUNT(*) as recipe_count,
-                       ROW_NUMBER() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
+                       DENSE_RANK() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE user_id IS NOT NULL
-                GROUP BY user_id
+                WHERE user_id IS NOT NULL AND is_active = 1
+                GROUP BY CAST(user_id AS TEXT)
             """, (now,))
             user_count = cursor.rowcount
 
@@ -1043,11 +1044,11 @@ class Database:
         return None
 
     def get_total_developers(self) -> int:
-        """Get total number of developers with ranked recipes"""
+        """Get total number of developers with active ranked recipes"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL")
+        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL AND is_active = 1")
         return cursor.fetchone()['total']
 
     def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
@@ -1082,12 +1083,12 @@ class Database:
         cursor.execute("""
             WITH current_ranked AS (
                 SELECT id AS recipe_id,
-                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) AS global_rank
+                       DENSE_RANK() OVER (ORDER BY popularity_score DESC) AS global_rank
                 FROM recipes
                 WHERE popularity_score > 0
             ),
             latest_ts AS (
-                -- GROUP BY + MAX: hash aggregation O(N), avoids O(N log N) sort of ROW_NUMBER
+                -- GROUP BY + MAX: hash aggregation O(N), avoids O(N log N) sort of DENSE_RANK
                 SELECT recipe_id, MAX(snapshot_timestamp) AS max_ts
                 FROM (
                     SELECT recipe_id, snapshot_timestamp FROM recipe_history WHERE snapshot_timestamp <= ?
@@ -1107,9 +1108,9 @@ class Database:
                     ON rh.recipe_id = lt.recipe_id AND rh.snapshot_timestamp = lt.max_ts
             ),
             past_ranked AS (
-                -- ROW_NUMBER here ranks only ~800 recipes, not millions of rows
+                -- DENSE_RANK here ranks only ~800 recipes, not millions of rows
                 SELECT id,
-                       ROW_NUMBER() OVER (ORDER BY popularity_score DESC) as past_rank
+                       DENSE_RANK() OVER (ORDER BY popularity_score DESC) as past_rank
                 FROM latest_before_cutoff
                 WHERE popularity_score > 0
             ),
@@ -1155,8 +1156,8 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Current total
-        cursor.execute("SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes")
+        # Current total (only active recipes)
+        cursor.execute("SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes WHERE is_active = 1")
         total_now = cursor.fetchone()['total']
 
         # Past total from closest snapshot before cutoff for each recipe
