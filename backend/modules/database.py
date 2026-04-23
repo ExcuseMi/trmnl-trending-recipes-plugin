@@ -990,7 +990,7 @@ class Database:
                        DENSE_RANK() OVER (ORDER BY SUM(popularity_score) DESC) as global_rank,
                        ?
                 FROM recipes
-                WHERE user_id IS NOT NULL AND is_active = 1
+                WHERE user_id IS NOT NULL
                 GROUP BY CAST(user_id AS TEXT)
             """, (now,))
             user_count = cursor.rowcount
@@ -1044,11 +1044,11 @@ class Database:
         return None
 
     def get_total_developers(self) -> int:
-        """Get total number of developers with active ranked recipes"""
+        """Get total number of developers with ranked recipes"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL AND is_active = 1")
+        cursor.execute("SELECT COUNT(DISTINCT user_id) as total FROM recipes WHERE user_id IS NOT NULL")
         return cursor.fetchone()['total']
 
     def should_fetch_all_recipes(self, max_hours: int = 1) -> bool:
@@ -1156,8 +1156,8 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Current total (only active recipes)
-        cursor.execute("SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes WHERE is_active = 1")
+        # Current total
+        cursor.execute("SELECT COALESCE(SUM(popularity_score), 0) as total FROM recipes")
         total_now = cursor.fetchone()['total']
 
         # Past total from closest snapshot before cutoff for each recipe
