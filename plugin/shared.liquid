@@ -43,7 +43,7 @@
     <img class="image h--10 w--10 binarize" src="{% if icon_url %}{{ icon_url }}{% else %}https://trmnl.com/images/plugins/trmnl--render.svg{% endif %}" onerror="this.onerror=null;this.src='https://trmnl.com/images/plugins/trmnl--render.svg';" />
   </div>
   <div class="content pl--1 self--start">
-    <div class="title title--small" data-value-fit="true" data-clamp="2">{{ name }}</div>
+    <div class="title title--small" data-clamp="2">{{ name }}</div>
     <div class="label">#{{ current_rank }}{% if rank_diff != null and rank_diff > 0 %}
       <span class="label label--gray ml--2">&#9650; {{ rank_diff }}</span>{% elsif rank_diff != null and rank_diff < 0 %}{% assign rank_diff_abs = rank_diff | abs %}
       <span class="label label--gray ml--2">&#9660; {{ rank_diff_abs }}</span>{% endif %}</div>
