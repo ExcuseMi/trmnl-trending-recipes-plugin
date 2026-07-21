@@ -297,7 +297,7 @@ def get_trending():
     - utc_offset: UTC offset in seconds for calendar calculations (default: 0)
     - user_id: filter to only this user's recipes (fetched + cached on first call)
     """
-    timeframe = request.args.get('timeframe', request.args.get('duration', '24h'))
+    timeframe = request.args.get('timeframe') or request.args.get('duration') or '24h'
     limit = min(int(request.args.get('limit', '10')), 50)
 
     # Get UTC offset
