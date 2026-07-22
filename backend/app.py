@@ -307,7 +307,7 @@ def get_trending():
         return jsonify({
             'error': 'Invalid UTC offset',
             'message': 'UTC offset must be an integer number of seconds'
-        }), 400
+        })
 
     # Parse include_unchanged (boolean, default false)
     include_unchanged = request.args.get('include_unchanged', 'false').lower() in ('true', '1', 'yes')
@@ -366,13 +366,13 @@ def get_trending():
             'error': 'Invalid timeframe',
             'message': str(e),
             'valid_timeframes': list(trending_calculator.TIMEFRAMES.keys())
-        }), 400
+        })
     except Exception as e:
         logger.error(f"✗ Error calculating trending: {e}")
         return jsonify({
             'error': 'Internal server error',
             'message': str(e),
-        }), 500
+        })
 
 
 
