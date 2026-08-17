@@ -3,7 +3,7 @@
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugin(s)
 
-*Last updated: 2026-08-16 06:33:27 UTC*
+*Last updated: 2026-08-17 06:46:58 UTC*
 
 
 ## <img src="assets/plugin-images/241645_icon.png" alt="Trending Recipes icon" width="32"/> [Trending Recipes](https://usetrmnl.com/recipes/241645)
