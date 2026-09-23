@@ -18,7 +18,7 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.schema_version = 6  # Current schema version
+        self.schema_version = 7  # Current schema version
         # Each cache maps key -> {'result': ..., 'timestamp': float}
         self._rank_cache: dict = {}
         self._rank_cache_ttl = 60 * 60        # 1 hour — ranks only change after hourly fetch
@@ -225,6 +225,22 @@ class Database:
             logger.error(f"✗ Schema migration failed: {e}")
             raise
 
+    def _migrate_from_v6_to_v7(self):
+        """Migrate database from schema version 6 to 7 - drop unused user_recipes table"""
+        logger.info("🔧 Migrating database schema from v6 to v7...")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("DROP TABLE IF EXISTS user_recipes")
+            conn.commit()
+            logger.info("✓ Schema migration to v7 completed")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"✗ Schema migration failed: {e}")
+            raise
+
     def _migrate_from_v4_to_v5(self):
         """Migrate database from schema version 4 to 5 - add materialized view tables for ranks"""
         logger.info("🔧 Migrating database schema from v4 to v5...")
@@ -363,6 +379,10 @@ class Database:
         if current_version < 6:
             self._migrate_from_v5_to_v6()
             self._set_schema_version(6)
+
+        if current_version < 7:
+            self._migrate_from_v6_to_v7()
+            self._set_schema_version(7)
 
         logger.info("✓ Database schema initialized and up to date")
 

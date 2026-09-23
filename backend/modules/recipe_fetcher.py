@@ -13,6 +13,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+class RecipeFetchError(Exception):
+    """Raised when a fetch could not retrieve every page"""
+
+
 class RecipeFetcher:
     """Fetches recipes from TRMNL API"""
 
@@ -20,20 +24,28 @@ class RecipeFetcher:
         self.database = database
         self.base_url = "https://trmnl.com/recipes.json"
         self.timeout = 30.0
+        self.max_attempts = 3
+        self.retry_delay = 10  # seconds, doubled after each failed attempt
 
     async def fetch_page(self, client: httpx.AsyncClient, page: int) -> Dict:
-        """Fetch a single page of recipes"""
-        try:
-            response = await client.get(
-                self.base_url,
-                params={'page': page, 'per_page': 100},
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"✗ Error fetching page {page}: {e}")
-            raise
+        """Fetch a single page of recipes, retrying on failure"""
+        delay = self.retry_delay
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                response = await client.get(
+                    self.base_url,
+                    params={'page': page, 'per_page': 100},
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                # httpx timeouts have an empty str(), so include the type
+                logger.error(f"✗ Error fetching page {page} (attempt {attempt}/{self.max_attempts}): {type(e).__name__}: {e}")
+                if attempt == self.max_attempts:
+                    raise
+                await asyncio.sleep(delay)
+                delay *= 2
 
     def parse_recipe(self, recipe_data: Dict) -> Dict:
         """Parse and normalize recipe data from API"""
@@ -76,12 +88,14 @@ class RecipeFetcher:
         """
         Fetch all recipes from TRMNL API (all pages)
         Returns: number of recipes processed
+        Raises: RecipeFetchError if any page could not be fetched
         """
         start_time = datetime.now()
         recipes_processed = 0
         page = 1
         total_recipes = None
         seen_ids = []
+        failed_page = None
 
         logger.info("📥 Starting recipe fetch from TRMNL API...")
 
@@ -118,14 +132,13 @@ class RecipeFetcher:
                                 recipe['forks']
                             )
 
-                            # Save daily snapshot at midnight (if it's the first snapshot of the day)
-                            now_utc = datetime.utcnow()
-                            if now_utc.hour == 0 and now_utc.minute < 10:  # Only in first 10 minutes of midnight
-                                self.database.save_snapshot(
-                                    recipe['id'],
-                                    recipe['installs'],
-                                    recipe['forks']
-                                )
+                            # Save daily snapshot (no-op if today's already exists, so the
+                            # first successful fetch of the UTC day wins, even if midnight failed)
+                            self.database.save_snapshot(
+                                recipe['id'],
+                                recipe['installs'],
+                                recipe['forks']
+                            )
 
                             recipes_processed += 1
 
@@ -152,14 +165,23 @@ class RecipeFetcher:
                     await asyncio.sleep(2)
 
                 except Exception as e:
-                    logger.error(f"✗ Error on page {page}: {e}")
+                    logger.error(f"✗ Error on page {page}: {type(e).__name__}: {e}")
+                    failed_page = page
                     break
+
+        duration = (datetime.now() - start_time).total_seconds()
+
+        if failed_page is not None:
+            # Don't mark unseen recipes inactive: the missing pages would deactivate them wrongly
+            raise RecipeFetchError(
+                f"fetch incomplete, failed on page {failed_page} "
+                f"({recipes_processed} recipes processed in {duration:.1f}s)"
+            )
 
         # Mark any recipe not returned by the API this poll as inactive
         if seen_ids:
             self.database.mark_inactive_recipes(seen_ids)
 
-        duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"✓ Recipe fetch complete: {recipes_processed} recipes in {duration:.1f}s")
 
         return recipes_processed
