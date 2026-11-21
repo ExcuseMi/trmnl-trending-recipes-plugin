@@ -18,6 +18,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from modules.database import Database
+from modules.fetch_liveness import FetchLiveness
+from modules.primary_lock import PrimaryLock
 from modules.recipe_fetcher import RecipeFetcher
 from modules.trending_calculator import TrendingCalculator
 
@@ -52,6 +54,8 @@ last_ip_refresh: Optional[datetime] = None
 
 # Worker coordination
 is_primary_worker = False
+primary_lock = PrimaryLock(WORKER_LOCK_FILE)
+fetch_liveness = FetchLiveness()
 
 # ============================================================================
 # FLASK APP
@@ -71,30 +75,17 @@ trending_calculator = TrendingCalculator(db)
 # ============================================================================
 
 def try_acquire_primary_worker():
-    """
-    Try to become the primary worker (for background jobs).
-    Uses a file lock to ensure only one worker runs background tasks.
-    Returns True if this worker becomes primary.
-    """
-
+    """Become the primary worker (background jobs) unless another live process is (modules/primary_lock.py)."""
     try:
-        # Try to create and lock the file
-        lock_fd = os.open(WORKER_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-
-        # If we got here, we created the file - we're the primary worker
-        os.write(lock_fd, f"{os.getpid()}\n".encode())
-
-        logger.info(f"✓ This worker (PID {os.getpid()}) is the PRIMARY worker")
-        return True
-
-    except FileExistsError:
-        # Lock file already exists - another worker is primary
-        logger.info(f"✓ This worker (PID {os.getpid()}) is a SECONDARY worker (background jobs disabled)")
-        return False
+        primary = primary_lock.acquire()
     except Exception as e:
-        # If we can't create the lock, assume we're not primary
-        logger.warning(f"⚠️  Could not acquire primary worker lock: {e}")
+        logger.error(f"✗ Could not take the primary worker lock: {e}")
         return False
+    if primary:
+        logger.info(f"✓ This worker (PID {os.getpid()}) is the PRIMARY worker")
+    else:
+        logger.info(f"✓ This worker (PID {os.getpid()}) is a SECONDARY worker (background jobs disabled)")
+    return primary
 
 
 # ============================================================================
@@ -272,15 +263,19 @@ def health():
     except ValueError:
         utc_offset = 0
 
-    return jsonify({
-        'status': 'healthy',
+    problem = fetch_liveness.problem(is_primary_worker)
+    body = {
+        'status': 'unhealthy' if problem else 'healthy',
+        'problem': problem,
         'timestamp': datetime.utcnow().isoformat(),
         'local_midnight': get_local_midnight(utc_offset).isoformat(),
         'utc_offset_seconds': utc_offset,
         'ip_whitelist_enabled': ENABLE_IP_WHITELIST,
         'last_ip_refresh': last_ip_refresh.isoformat() if last_ip_refresh else None,
         'is_primary_worker': is_primary_worker
-    })
+    }
+    # 503 makes the compose healthcheck restart the container (docker-compose.yml)
+    return jsonify(body), (503 if problem else 200)
 
 
 @app.route('/trending', methods=['GET'])
@@ -416,6 +411,7 @@ def initialize():
 
 def recipe_fetch_worker():
     """Fetch recipes every hour, with immediate execution on startup"""
+    fetch_liveness.mark()
 
     # First, always fetch immediately on startup (catch up any missed hours)
     if FORCE_REFRESH or db.should_fetch_all_recipes(max_hours=1):
@@ -438,6 +434,7 @@ def recipe_fetch_worker():
             minutes_to_next_hour = 60 - now.minute
             seconds_to_next_hour = (minutes_to_next_hour * 60) - now.second
 
+            fetch_liveness.mark()  # every pass, also after a failed fetch (modules/fetch_liveness.py)
             # Wait until next hour
             next_hour = (now.hour + 1) % 24
             logger.info(f"⏰ Next fetch at {next_hour:02d}:00 ({minutes_to_next_hour} minutes)")
@@ -502,22 +499,6 @@ def start_snapshot_cleanup_worker():
 
 # Initialize on module load (for gunicorn)
 initialize()
-
-# Cleanup handler for graceful shutdown
-import atexit
-
-
-def cleanup_primary_worker():
-    """Remove primary worker lock file on shutdown"""
-    if is_primary_worker and os.path.exists(WORKER_LOCK_FILE):
-        try:
-            os.remove(WORKER_LOCK_FILE)
-            logger.info("✓ Primary worker lock cleaned up")
-        except Exception as e:
-            logger.warning(f"⚠️  Could not remove lock file: {e}")
-
-
-atexit.register(cleanup_primary_worker)
 
 if __name__ == '__main__':
     # Run Flask development server (for local testing only)

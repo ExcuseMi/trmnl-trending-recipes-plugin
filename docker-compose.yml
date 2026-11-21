@@ -18,7 +18,21 @@ services:
       - DEBUG=${DEBUG:-false}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      # /health answers 503 when the recipe fetch is not running (no primary worker, or the worker went silent):
+      # stop gunicorn (PID 1) so the restart policy starts a fresh process that takes the lock and fetches again.
+      # Only on a 503: a refused connection while booting is not a reason to restart (2026-11-17 outage, 4 days).
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os, signal, urllib.error, urllib.request
+          try:
+              urllib.request.urlopen('http://localhost:5000/health', timeout=8)
+          except urllib.error.HTTPError as e:
+              if e.code == 503:
+                  os.kill(1, signal.SIGTERM)
+              raise
       interval: 30s
       timeout: 10s
       retries: 3
